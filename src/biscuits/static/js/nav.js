@@ -12,7 +12,7 @@ export function route() {
   if ((m = path.match(/^\/project\/(\d+)$/))) return { name: "project", id: +m[1], q };
   if ((m = path.match(/^\/people\/(\d+)$/))) return { name: "people", id: +m[1], q };
   const name = path.slice(1) || "home";
-  return { name: ["home", "my", "all", "search", "log", "archived"].includes(name) ? name : "home", q };
+  return { name: ["home", "my", "all", "search", "log", "archived", "admin", "account"].includes(name) ? name : "home", q };
 }
 
 export const currentTask = () => +new URLSearchParams(location.search).get("task") || null;

@@ -7,14 +7,16 @@ last good copy: if someone was trying to turn writes off, keeping the old
 settings would be the wrong way to fail.
 """
 
-import ipaddress
 import json
 import os
+import secrets
 import stat
 import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+from cryptography.fernet import Fernet
 
 DEFAULT_PATH = Path("~/.biscuits/config.toml")
 DEFAULT_HOST = "127.0.0.1"
@@ -29,7 +31,11 @@ class ConfigError(RuntimeError):
 class Config:
     path: Path
     op_url: str
-    op_api_key: str
+    op_admin_token: str
+    op_container: str
+    secret_key: str | None
+    encryption_key: str | None
+    trusted_proxy: str | None
     writes_mode: str
     write_projects: frozenset[int]
     write_all_projects: bool
@@ -43,8 +49,8 @@ class Config:
         return self.data_dir / "biscuits.db"
 
     @property
-    def snapshot_file(self) -> Path:
-        return self.data_dir / "snapshot.json"
+    def snapshot_dir(self) -> Path:
+        return self.data_dir / "snapshots"
 
     @property
     def write_log_file(self) -> Path:
@@ -111,15 +117,29 @@ def _parse(path: Path) -> Config:
     writes = _table(raw, "writes")
     server = _table(raw, "server")
     storage = _table(raw, "storage")
+    auth = _table(raw, "auth")
 
     url = op.get("url")
-    key = op.get("api_key")
+    # `api_key` is the old name, from before per-user login.
+    key = op.get("admin_token", op.get("api_key"))
     if not (isinstance(url, str) and url.strip()):
         raise ConfigError(f"{path}: [openproject] url is required")
     if not url.startswith(("http://", "https://")):
         raise ConfigError(f"{path}: [openproject] url must start with http:// or https://")
     if not (isinstance(key, str) and key.strip()):
-        raise ConfigError(f"{path}: [openproject] api_key is required")
+        raise ConfigError(f"{path}: [openproject] admin_token is required")
+    container = op.get("container", "openproject")
+    if not (isinstance(container, str) and container):
+        raise ConfigError(f"{path}: [openproject] container must be a string")
+
+    secret_key, encryption_key = auth.get("secret_key"), auth.get("encryption_key")
+    if secret_key is not None and not (isinstance(secret_key, str) and len(secret_key) >= 32):
+        raise ConfigError(f"{path}: [auth] secret_key must be a string of at least 32 characters")
+    if encryption_key is not None:
+        try:
+            Fernet(encryption_key)
+        except (ValueError, TypeError) as e:
+            raise ConfigError(f"{path}: [auth] encryption_key isn't a valid key") from e
 
     mode = writes.get("mode", "preview")
     if mode not in ("preview", "live"):
@@ -144,6 +164,10 @@ def _parse(path: Path) -> Config:
     if not (isinstance(base_path, str) and base_path.startswith("/")):
         raise ConfigError(f'{path}: [server] base_path must start with "/"')
 
+    trusted_proxy = server.get("trusted_proxy")
+    if trusted_proxy is not None and not (isinstance(trusted_proxy, str) and trusted_proxy):
+        raise ConfigError(f"{path}: [server] trusted_proxy must be an address")
+
     data_dir = storage.get("data_dir", str(path.parent))
     if not isinstance(data_dir, str):
         raise ConfigError(f"{path}: [storage] data_dir must be a string")
@@ -151,7 +175,11 @@ def _parse(path: Path) -> Config:
     return Config(
         path=path,
         op_url=url.strip().rstrip("/"),
-        op_api_key=key.strip(),
+        op_admin_token=key.strip(),
+        op_container=container,
+        secret_key=secret_key,
+        encryption_key=encryption_key,
+        trusted_proxy=trusted_proxy,
         writes_mode=mode,
         write_projects=frozenset(projects),
         write_all_projects=everything,
@@ -170,15 +198,6 @@ def _table(raw: dict, name: str) -> dict:
     return value
 
 
-def is_loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 def permission_problem(path: Path) -> str | None:
     """A warning if the config, which holds an API key, is readable by others."""
     try:
@@ -190,18 +209,34 @@ def permission_problem(path: Path) -> str | None:
     return None
 
 
-def render(url, api_key, mode="preview", projects=(), host=DEFAULT_HOST, port=DEFAULT_PORT,
+def auth_section() -> str:
+    """A new [auth] table, with fresh secrets."""
+    return f"""\
+[auth]
+# Signs login sessions. Changing it signs everyone out.
+secret_key = {json.dumps(secrets.token_urlsafe(48))}
+# Encrypts users' OpenProject API keys in the database. If this is lost, every
+# key has to be entered again.
+encryption_key = {json.dumps(Fernet.generate_key().decode())}
+"""
+
+
+def render(url, admin_token, mode="preview", projects=(), host=DEFAULT_HOST, port=DEFAULT_PORT,
            base_path="/") -> str:
     """Text of a new config file. JSON string syntax is valid TOML basic-string syntax."""
     projects_toml = '"*"' if projects == "*" else "[" + ", ".join(str(p) for p in projects) + "]"
     return f"""\
-# biscuits configuration. It holds an API key: keep it mode 600.
-# Changes apply on the next request, except [server] and [storage], which need
-# `biscuits restart`.
+# biscuits configuration. It holds secrets: keep it mode 600.
+# Changes apply on the next request, except [server], [storage] and [auth], which
+# need `biscuits restart`.
 
 [openproject]
 url = {json.dumps(url)}
-api_key = {json.dumps(api_key)}
+# Used only for managing accounts and looking up names, never to read or change
+# tasks. Ideally a dedicated OpenProject admin account, not a person's key.
+admin_token = {json.dumps(admin_token)}
+# The Docker container OpenProject runs in, for the key command on the admin screen.
+container = "openproject"
 
 [writes]
 # "preview": nothing is sent to OpenProject; edits apply in the browser only.
@@ -211,12 +246,24 @@ mode = {json.dumps(mode)}
 projects = {projects_toml}
 
 [server]
-# biscuits has no login yet: anyone who can reach this address acts with the
-# API key above. Think before binding to anything but localhost.
 host = {json.dumps(host)}
 port = {port}
 base_path = {json.dumps(base_path)}
-"""
+# Behind a reverse proxy, the proxy's address. Only then is X-Forwarded-Proto
+# believed, which is how biscuits knows the connection is HTTPS.
+# trusted_proxy = "127.0.0.1"
+
+{auth_section()}"""
+
+
+def add_auth_section(path: Path) -> bool:
+    """Add [auth] secrets to an existing config. False if it already has them."""
+    with open(path, "rb") as f:
+        if "auth" in tomllib.load(f):
+            return False
+    with open(path, "a") as f:
+        f.write("\n" + auth_section())
+    return True
 
 
 def write_new(path: Path, text: str) -> None:

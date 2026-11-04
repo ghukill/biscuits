@@ -1,15 +1,25 @@
 """Tests run against a stub OpenProject; nothing touches a real server."""
 
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from cryptography.fernet import Fernet
 
-from biscuits import config, snapshot
+from biscuits import accounts, client, config, db, opadmin, snapshot
+from biscuits.app import create_app
+
+ADMIN_TOKEN = "secret-key-value"
+USER_KEY = "user-key-value"
+SECRET_KEY = "s" * 48
+ENCRYPTION_KEY = Fernet.generate_key().decode()
+PASSWORD = "correct horse battery"
+H = {"X-Biscuits": "1"}
 
 
-def wp(id=1, project=1, subject="A task"):
+def wp(id=1, project=1, subject="A task", links=None):
     return {
         "_type": "WorkPackage", "id": id, "subject": subject, "lockVersion": 3,
         "_links": {
@@ -17,6 +27,7 @@ def wp(id=1, project=1, subject="A task"):
             "status": {"href": "/api/v3/statuses/1", "title": "New"},
             "priority": {"href": "/api/v3/priorities/1", "title": "Normal"},
             "type": {"href": "/api/v3/types/1", "title": "Task"},
+            **(links or {}),
         },
     }
 
@@ -26,10 +37,20 @@ def collection(*els):
 
 
 class StubOP:
-    """Records non-GET requests in .writes and answers the GETs biscuits makes."""
+    """Records every request, with the key it used, and answers the GETs biscuits makes.
+
+    By default any key is user #7 "Pat", an admin who can see everything. Fill in
+    .people to have only those keys work, each as its own non-admin user with its
+    own visible work packages, like a real instance.
+    """
 
     def __init__(self):
-        self.writes = []
+        self.requests = []       # (method, path, key)
+        self.writes = []         # (method, path, body)
+        self.people = {}         # key -> {"id", "name", "wps": [ids], "admin": bool}
+        self.deny_writes = None  # an HTTP status to answer writes with
+        self.activities = []
+        self.project_links = {}
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -43,17 +64,40 @@ class StubOP:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _key(self):
+                raw = (self.headers.get("Authorization") or "").removeprefix("Basic ")
+                return base64.b64decode(raw).decode().removeprefix("apikey:")
+
+            def _person(self):
+                """(known, person). person is None for the default admin Pat."""
+                if not stub.people:
+                    return True, None
+                who = stub.people.get(self._key())
+                return who is not None, who
+
             def do_GET(self):
                 path = self.path.split("?")[0].removeprefix("/api/v3")
+                stub.requests.append(("GET", path, self._key()))
+                known, who = self._person()
+                if not known:
+                    return self._send({"message": "unauthorized"}, 401)
+                sees = (lambda n: n in who["wps"]) if who else (lambda n: True)
+                admin = who is None or who.get("admin")
                 if path == "/work_packages":
-                    return self._send(collection(wp(1, 1), wp(2, 2)))
-                if path.startswith("/work_packages/") and path.endswith("/activities"):
-                    return self._send(collection())
+                    return self._send(collection(*[wp(n, n) for n in (1, 2) if sees(n)]))
                 if path.startswith("/work_packages/"):
-                    n = int(path.rsplit("/", 1)[-1])
+                    n = int(path.split("/")[2])
+                    if not sees(n):
+                        return self._send({"message": "not found"}, 404)
+                    if path.endswith("/activities"):
+                        return self._send(collection(*stub.activities))
                     return self._send(wp(n, project=n))  # WP n lives in project n
                 if path == "/projects":
                     return self._send(collection({"id": 1, "name": "P", "active": True}))
+                if path.startswith("/projects/") and path.endswith("/available_assignees"):
+                    return self._send(collection({"_type": "User", "id": 7, "name": "Pat"}))
+                if path.startswith("/projects/"):
+                    return self._send({"id": 1, "name": "P", "_links": stub.project_links})
                 if path == "/statuses":
                     return self._send(collection({"id": 1, "name": "New"}))
                 if path == "/priorities":
@@ -61,14 +105,31 @@ class StubOP:
                 if path == "/types":
                     return self._send(collection({"id": 1, "name": "Task"}))
                 if path == "/users":
-                    return self._send(collection({"_type": "User", "id": 7, "name": "Pat"}))
+                    if not admin:
+                        return self._send({"message": "forbidden"}, 403)
+                    return self._send(collection({"_type": "User", "id": 7, "name": "Pat"},
+                                                 {"_type": "User", "id": 8, "name": "Old Author"}))
+                if path == "/principals":
+                    return self._send(collection({"_type": "User", "id": who["id"], "name": who["name"]},
+                                                 {"_type": "Group", "id": 90, "name": "A group"}))
                 if path == "/users/me":
+                    if who:
+                        return self._send({"id": who["id"], "name": who["name"], "admin": bool(who.get("admin"))})
                     return self._send({"id": 7, "name": "Pat", "admin": True})
                 self._send({"message": "nope"}, 404)
 
             def _write(self):
                 n = int(self.headers.get("Content-Length") or 0)
-                stub.writes.append((self.command, self.path, json.loads(self.rfile.read(n))))
+                body = json.loads(self.rfile.read(n))
+                stub.requests.append((self.command, self.path.removeprefix("/api/v3"), self._key()))
+                known, _ = self._person()
+                if not known:
+                    return self._send({"message": "unauthorized"}, 401)
+                if stub.deny_writes:
+                    return self._send({"message": "denied"}, stub.deny_writes)
+                stub.writes.append((self.command, self.path, body))
+                if self.path.endswith("/users"):
+                    return self._send({"_type": "User", "id": 50, "name": "New Person"})
                 self._send(wp(1, 1, subject="Changed"))
 
             do_PATCH = do_POST = do_DELETE = _write
@@ -76,6 +137,9 @@ class StubOP:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_port}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def keys_used_for(self, prefix):
+        return {key for _, path, key in self.requests if path.startswith(prefix)}
 
 
 @pytest.fixture
@@ -92,8 +156,9 @@ def write_config(tmp_path, op):
 
     def write(mode="preview", projects="[]", extra="", url=None):
         path.write_text(
-            f'[openproject]\nurl = "{url or op.url}"\napi_key = "secret-key-value"\n'
-            f'[writes]\nmode = "{mode}"\nprojects = {projects}\n{extra}'
+            f'[openproject]\nurl = "{url or op.url}"\nadmin_token = "{ADMIN_TOKEN}"\n'
+            f'[writes]\nmode = "{mode}"\nprojects = {projects}\n'
+            f'[auth]\nsecret_key = "{SECRET_KEY}"\nencryption_key = "{ENCRYPTION_KEY}"\n{extra}'
         )
         path.chmod(0o600)
         # Rewrites within a timestamp tick must still be noticed by the cache.
@@ -105,5 +170,38 @@ def write_config(tmp_path, op):
 
 
 @pytest.fixture(autouse=True)
-def reset_snapshot():
-    snapshot._state.update(data=None, fetched_at=0.0, error=None)
+def reset_state():
+    snapshot._states.clear()
+    opadmin._names, opadmin._names_at = {}, 0.0
+    accounts.limiter = accounts.RateLimiter()
+
+
+@pytest.fixture
+def conn():
+    """A connection like a signed-in user's, for testing writes directly."""
+    return client.OP(USER_KEY, actor={"user_id": 1, "username": "pat", "op_user_id": 7})
+
+
+def make_user(username="pat", key=USER_KEY, op_user_id=7, admin=True, must_change=False):
+    """An account with a key already in place, without asking OpenProject about it."""
+    user, _ = accounts.create(username, password=PASSWORD, is_admin=admin, op_user_id=op_user_id,
+                              op_user_name=username.title(), must_change=must_change)
+    if key:
+        with db.session() as s:
+            s.get(db.User, user.id).op_key_enc = accounts._fernet().encrypt(key.encode()).decode()
+    return accounts.get(user.id)
+
+
+def login(client_, username="pat", password=PASSWORD, prefix=""):
+    return client_.post(f"{prefix}/api/login", json={"username": username, "password": password}, headers=H)
+
+
+@pytest.fixture
+def web_as():
+    """A signed-in test client for an account made with make_user."""
+    def build(username="pat", **kwargs):
+        make_user(username, **kwargs)
+        c = create_app().test_client()
+        assert login(c, username).status_code == 200
+        return c
+    return build

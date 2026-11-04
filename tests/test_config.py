@@ -61,10 +61,24 @@ def test_render_round_trips_awkward_values(tmp_path):
     config.set_path(path)
     cfg = config.load()
     config.set_path(None)
-    assert (cfg.op_url, cfg.op_api_key, cfg.write_all_projects) == ("https://op.test", key, True)
+    assert (cfg.op_url, cfg.op_admin_token, cfg.write_all_projects) == ("https://op.test", key, True)
+    assert cfg.secret_key and cfg.encryption_key  # new configs get login secrets
     assert (cfg.host, cfg.port, cfg.base_path) == ("0.0.0.0", 80, "/b")
     with pytest.raises(FileExistsError):
         config.write_new(path, "x")
+
+
+def test_trusted_proxy_setting(write_config):
+    write_config(extra='[server]\ntrusted_proxy = "127.0.0.1"\n')
+    assert config.load().trusted_proxy == "127.0.0.1"
+
+
+def test_a_bad_encryption_key_is_rejected(write_config):
+    path = write_config()
+    text = path.read_text()
+    path.write_text(text[:text.index("encryption_key")] + 'encryption_key = "nope"\n')
+    with pytest.raises(config.ConfigError, match="encryption_key"):
+        config.load()
 
 
 def test_permission_warning(write_config):

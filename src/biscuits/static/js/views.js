@@ -171,7 +171,7 @@ export function viewProject(el, pid, q) {
       <div class="vtitle"><span class="ptile-ic big" style="--h:${hue(p.name)}">${ICON.list}</span><div>
         <h1>${esc(p.name)} <span class="p-mode ${live ? "live" : "preview"}" title="${live ? "Edits here are saved to OpenProject" : "Edits here are a preview only (not saved)"}">${live ? "Live" : "Preview"}</span></h1>
         <div class="tabs"><a href="${href(`/project/${pid}`)}" data-nav class="${board ? "" : "on"}">${ICON.list} List</a><a href="${href(`/project/${pid}`, { view: "board" })}" data-nav class="${board ? "on" : ""}">${ICON.board} Board</a></div></div></div>
-      <div class="vtools">${compButton("project")}${p.active ? `<button class="btn sm" id="archive-btn" type="button">${ICON.archive} ${archived ? "Unarchive" : "Archive"}</button>` : ""}<a class="btn sm" href="${esc(S.snap.op_url)}/projects/${esc(p.identifier)}/work_packages" target="_blank" rel="noopener">${ICON.ext} OpenProject</a></div>
+      <div class="vtools">${compButton("project")}${p.active && (p.can_manage || S.account?.is_admin) ? `<button class="btn sm" id="archive-btn" type="button">${ICON.archive} ${archived ? "Unarchive" : "Archive"}</button>` : ""}<a class="btn sm" href="${esc(S.snap.op_url)}/projects/${esc(p.identifier)}/work_packages" target="_blank" rel="noopener">${ICON.ext} OpenProject</a></div>
     </div>
     <div class="vbody ${board ? "board-wrap" : ""}" id="list"></div>`);
   if (fresh) {
@@ -320,7 +320,7 @@ export function viewArchived(el) {
 
 // ============ Write log ============
 export async function viewLog(el) {
-  frame(el, "log", `<div class="vhead"><div class="vtitle"><span class="ptile-ic big">${ICON.log}</span><div><h1>Write log</h1><div class="muted">Every change biscuits made or would have made to OpenProject, newest first.</div></div></div>
+  frame(el, "log", `<div class="vhead"><div class="vtitle"><span class="ptile-ic big">${ICON.log}</span><div><h1>Write log</h1><div class="muted">${S.account?.is_admin ? "Every change biscuits made or would have made to OpenProject, newest first." : "Your changes through biscuits, newest first."}</div></div></div>
     <div class="vtools"><button class="btn sm" id="log-reload">${ICON.refresh} Reload</button></div></div><div class="vbody" id="log"></div>`);
   $("#log-reload", el).onclick = () => viewLog(el);
   const box = $("#log", el);
@@ -329,7 +329,7 @@ export async function viewLog(el) {
     const allowed = writes.all_projects ? "all projects" : writes.write_projects.map((id) => projectName(id) || `#${id}`).join(", ") || "none";
     box.innerHTML = `<div class="card log-gate">Mode: <b>${esc(writes.mode)}</b>. Write-enabled projects: <b>${esc(allowed)}</b>. Changes anywhere else are previews and are never sent.</div>
       <div class="card"><table class="log"><thead><tr><th>When</th><th>What</th><th>Result</th><th>Request</th></tr></thead><tbody>
-      ${entries.map((e) => `<tr><td>${esc(e.ts.replace("T", " "))}</td><td><b>${esc(e.op)}</b> ${e.wp ? `<a href="#" data-open="${e.wp}">#${e.wp}</a>` : ""}<div class="muted">${esc(e.subject_before || "")}</div></td>
+      ${entries.map((e) => `<tr><td>${esc(e.ts.replace("T", " "))}${e.actor?.username ? `<div class="muted">${esc(e.actor.username)}</div>` : ""}</td><td><b>${esc(e.op)}</b> ${e.wp ? `<a href="#" data-open="${e.wp}">#${e.wp}</a>` : ""}<div class="muted">${esc(e.subject_before || "")}</div></td>
         <td>${e.sent ? (e.ok === false ? `<span class="pill err">failed</span><div class="muted">${esc(e.error || "")}</div>` : `<span class="pill ok">sent</span>`) : `<span class="pill warn">preview</span><div class="muted">${esc(e.reason)}</div>`}</td>
         <td><code>${esc(e.method)} ${esc(e.path)}</code><details><summary>body</summary><pre>${esc(JSON.stringify(e.body, null, 2))}</pre></details></td></tr>`).join("")}
       </tbody></table></div>`;

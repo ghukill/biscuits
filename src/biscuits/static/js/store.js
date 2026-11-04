@@ -18,6 +18,7 @@ export const S = {
   users: new Map(),      // id -> {id, name}
   projects: new Map(),
   archived: new Set(),   // project ids archived in biscuits
+  account: null,         // the signed-in biscuits account
   me: null, meId: null,
   writes: { mode: "preview", write_projects: [], all_projects: false },
   justDone: new Set(),   // completed this session: keep visible until view change
@@ -31,10 +32,23 @@ async function api(path, opts = {}) {
   const res = await fetch(BASE + path, { ...opts, headers: { ...(opts.body ? HDRS : { "X-Biscuits": "1" }), ...(opts.headers || {}) } });
   let body = {};
   try { body = await res.json(); } catch (_) {}
-  if (!res.ok || body.ok === false) throw new Error(body.error || `HTTP ${res.status}`);
+  if (body.code === "login") {
+    location.href = `${BASE}/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+    return new Promise(() => {}); // the page is going away
+  }
+  if (body.code === "must_change") {
+    location.href = `${BASE}/password`;
+    return new Promise(() => {});
+  }
+  if (!res.ok || body.ok === false) {
+    const err = new Error(body.error || `HTTP ${res.status}`);
+    err.code = body.code;
+    throw err;
+  }
   return body;
 }
 export const getJSON = (p) => api(p);
+export const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) });
 
 // ---------- loading ----------
 export function adopt(body) {
@@ -42,6 +56,7 @@ export function adopt(body) {
   S.fetchedAt = body.fetched_at;
   if (body.writes) S.writes = body.writes;
   S.archived = new Set(body.archived_projects || []);
+  if (body.account) S.account = body.account;
   S.me = S.snap.me; S.meId = S.snap.me_id;
   S.statuses = new Map(S.snap.statuses.map((s) => [s.id, s]));
   S.priorities = [...S.snap.priorities].sort((a, b) => a.position - b.position);
@@ -148,6 +163,11 @@ function previewNotice(r, reason) {
 export async function update(id, changes, opts = {}) {
   const r = row(id);
   if (!r) return;
+  if (r.can_edit === false) {
+    toast("You don't have permission to edit this task in OpenProject.", { kind: "warn" });
+    emit({ type: "update", ids: [r.id] }); // puts back anything typed in place
+    return;
+  }
   const keys = Object.keys(changes).filter((k) => FIELDS.includes(k));
   if (!keys.length) return;
   const prev = snapshotOf(r, keys);

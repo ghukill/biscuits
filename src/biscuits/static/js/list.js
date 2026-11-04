@@ -28,7 +28,11 @@ const COLS = {
 const memberCache = new Map();
 export async function usersForPicker(pid) {
   if (!memberCache.has(pid)) {
-    memberCache.set(pid, getJSON(`/api/assignees/${pid}`).then((d) => new Set(d.ids)).catch(() => null));
+    memberCache.set(pid, getJSON(`/api/assignees/${pid}`).then((d) => {
+      // A project member may have no tasks you can see, so add their names.
+      for (const u of d.people || []) if (!S.users.has(u.id)) S.users.set(u.id, u);
+      return new Set(d.ids);
+    }).catch(() => null));
   }
   const members = await memberCache.get(pid);
   const all = [...S.users.values()].filter((u) => u.status !== "locked" && u.name !== "OpenProject Admin" && (!members || members.has(u.id)));

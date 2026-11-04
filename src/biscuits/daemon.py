@@ -82,18 +82,17 @@ def serve_foreground(host=None, port=None, threads=8) -> None:
 
     if problem := config.permission_problem(cfg.path):
         log.warning(problem)
-    if not config.is_loopback(host):
-        log.warning(
-            "Listening on %s, and biscuits has no login: anyone who can reach this "
-            "address acts as the OpenProject API key's owner.", host,
-        )
     log.info(
         "biscuits starting on http://%s:%s%s/ (writes: %s; config: %s)",
         host, port, cfg.base_path, cfg.writes_mode, cfg.path,
     )
     app = create_app()
+    # waitress only believes X-Forwarded-* from the configured proxy, and strips
+    # those headers from anyone else, so they can't be spoofed.
+    proxy = {"trusted_proxy": cfg.trusted_proxy, "trusted_proxy_count": 1,
+             "trusted_proxy_headers": "x-forwarded-proto x-forwarded-for"} if cfg.trusted_proxy else {}
     try:
-        serve(app, host=host, port=port, threads=threads, ident="biscuits")
+        serve(app, host=host, port=port, threads=threads, ident="biscuits", **proxy)
     except OSError as e:
         raise DaemonError(f"Can't listen on {host}:{port}: {e.strerror}") from e
     finally:
@@ -101,7 +100,7 @@ def serve_foreground(host=None, port=None, threads=8) -> None:
     log.info("biscuits stopped")
     logging.shutdown()
     # Don't let interpreter exit wait on a snapshot fetch still in progress. The
-    # snapshot cache and write log are safe: active requests have finished.
+    # snapshot caches and write log are safe: active requests have finished.
     os._exit(0)
 
 

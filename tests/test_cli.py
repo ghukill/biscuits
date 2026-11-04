@@ -4,8 +4,9 @@ import stat
 import pytest
 from click.testing import CliRunner
 
-from biscuits import config, daemon
+from biscuits import accounts, client, config, daemon
 from biscuits.cli import main
+from conftest import ADMIN_TOKEN, make_user
 
 
 def run(*args, **kwargs):
@@ -52,27 +53,92 @@ def test_missing_config_is_one_clean_line(tmp_path):
 
 
 def test_doctor_passes_then_fails_when_op_is_down(write_config):
-    r = run("--config", write_config(), "doctor")
+    path = write_config()
+    make_user()
+    r = run("--config", path, "doctor")
     assert r.exit_code == 0, r.output
-    assert "as Pat" in r.output and "admin" in r.output and "2 work packages" in r.output
+    assert "as Pat" in r.output and "1 active account" in r.output
     r = run("--config", write_config(url="http://127.0.0.1:9"), "doctor")
     assert r.exit_code == 1 and "FAIL" in r.output
 
 
-def test_snapshot_commands(write_config):
+def test_doctor_fails_without_an_admin_or_login_secrets(write_config):
     path = write_config()
-    assert run("--config", path, "snapshot", "info").exit_code == 1
-    r = run("--config", path, "snapshot", "refresh")
-    assert r.exit_code == 0 and "2 work packages" in r.output
-    assert "work packages:  2" in run("--config", path, "snapshot", "info").output
+    assert "no admin account" in run("--config", path, "doctor").output
+    path.write_text(path.read_text().split("[auth]")[0])
+    r = run("--config", path, "doctor")
+    assert r.exit_code == 1 and "add-auth-keys" in r.output
+
+
+def test_doctor_warns_when_the_admin_token_is_someones_own_key(write_config):
+    path = write_config()
+    make_user(key=ADMIN_TOKEN, op_user_id=7)
+    assert "dedicated account is better" in run("--config", path, "doctor").output
+
+
+def test_add_auth_keys_upgrades_an_old_config_once(write_config):
+    path = write_config()
+    path.write_text(path.read_text().split("[auth]")[0].replace("admin_token", "api_key"))
+    assert "Added" in run("--config", path, "config", "add-auth-keys").output
+    cfg = config.load()
+    assert cfg.secret_key and cfg.encryption_key and cfg.op_admin_token == ADMIN_TOKEN
+    before = path.read_text()
+    assert "Nothing changed" in run("--config", path, "config", "add-auth-keys").output
+    assert path.read_text() == before
+
+
+def test_snapshot_info_lists_each_account(write_config, op):
+    from biscuits import snapshot
+    path = write_config()
+    assert "No snapshots" in run("--config", path, "snapshot", "info").output
+    snapshot.refresh(3, client.OP("k"))
+    assert "account 3: Pat, 2 work packages" in run("--config", path, "snapshot", "info").output
 
 
 def test_writes_commands(write_config):
     path = write_config()
     from biscuits import writes
-    writes.update(1, {"subject": "x"})
+    writes.update(client.OP("k", actor={"username": "pat"}), 1, {"subject": "x"})
     assert "1 not sent" in run("--config", path, "writes", "status").output
-    assert "PATCH /work_packages/1" in run("--config", path, "writes", "log").output
+    output = run("--config", path, "writes", "log").output
+    assert "PATCH /work_packages/1" in output and "pat" in output
+
+
+def test_users_add_first_admin_and_list(write_config):
+    path = write_config()
+    r = run("--config", path, "users", "add", "Graham", "--admin")
+    assert r.exit_code == 0, r.output
+    temp = r.output.split("Temporary password: ")[1].split()[0]
+    user = accounts.authenticate("graham", temp)
+    assert user.is_admin and user.must_change_password
+    assert "graham" in run("--config", path, "users", "list").output
+    assert run("--config", path, "users", "add", "graham").exit_code == 1
+
+
+def test_users_set_key_validates_and_a_bad_key_leaves_no_account(write_config, op):
+    path = write_config()
+    op.people = {"alice-key": {"id": 21, "name": "Alice", "wps": []}}
+    r = run("--config", path, "users", "add", "alice", "--op-user", 99, "--key-stdin", input="alice-key\n")
+    assert r.exit_code == 1 and "belongs to Alice" in r.output
+    assert accounts.by_username("alice") is None
+    r = run("--config", path, "users", "add", "alice", "--op-user", 21, "--key-stdin", input="alice-key\n")
+    assert r.exit_code == 0, r.output
+    user = accounts.by_username("alice")
+    assert accounts.get_key(user) == "alice-key" and user.display_name == "Alice"
+    r = run("--config", path, "users", "set-key", "alice", "--key-stdin", input="wrong\n")
+    assert r.exit_code == 1 and "didn't accept" in r.output
+
+
+def test_users_reset_disable_enable(write_config):
+    path = write_config()
+    make_user("root")
+    make_user("alice", op_user_id=21, admin=False)
+    temp = run("--config", path, "users", "reset-password", "alice").output.split(": ")[1].strip()
+    assert accounts.authenticate("alice", temp)
+    assert "disabled" in run("--config", path, "users", "disable", "alice").output
+    assert accounts.authenticate("alice", temp) is None
+    assert "enabled" in run("--config", path, "users", "enable", "alice").output
+    assert run("--config", path, "users", "disable", "nobody").exit_code == 1
 
 
 def _free_port():

@@ -1,14 +1,14 @@
 import pytest
 
+from biscuits import config
 from biscuits.app import create_app
-
-H = {"X-Biscuits": "1"}
+from conftest import H, login, make_user
 
 
 @pytest.fixture
-def web(write_config):
+def web(write_config, web_as):
     write_config()
-    return create_app().test_client()
+    return web_as()
 
 
 def test_shell_routes_and_static_assets(web):
@@ -20,14 +20,26 @@ def test_shell_routes_and_static_assets(web):
         assert web.get(path).status_code == 200, path
 
 
-def test_healthz_needs_nothing_from_openproject(web):
-    assert web.get("/healthz").json["status"] == "ok"
+def test_healthz_needs_nothing_from_openproject(write_config):
+    write_config(url="http://127.0.0.1:9")
+    assert create_app().test_client().get("/healthz").json["status"] == "ok"
+
+
+def test_starting_without_login_secrets_says_how_to_fix_it(write_config):
+    path = write_config()
+    path.write_text(path.read_text().split("[auth]")[0])
+    with pytest.raises(config.ConfigError, match="add-auth-keys"):
+        create_app()
 
 
 def test_base_path(write_config):
     write_config(extra='[server]\nbase_path = "/biscuits/"\n')
     web = create_app().test_client()
+    make_user()
     assert web.get("/").headers["Location"] == "/biscuits/"
+    assert "/biscuits/login" in web.get("/biscuits/").headers["Location"]
+    r = login(web, prefix="/biscuits")
+    assert "Path=/biscuits" in r.headers["Set-Cookie"]
     html = web.get("/biscuits/").text
     assert 'data-base="/biscuits"' in html and "/biscuits/static/js/main.js" in html
     assert web.get("/biscuits/static/js/main.js").status_code == 200
@@ -42,34 +54,34 @@ def test_snapshot_never_exposes_the_key(web):
     assert "secret-key-value" not in r.text
 
 
-def test_posts_require_the_csrf_header(write_config, op):
+def test_posts_require_the_csrf_header(write_config, op, web_as):
     write_config("live", '"*"')
-    web = create_app().test_client()
+    web = web_as()
     assert web.post("/api/wp/1", json={"changes": {"subject": "x"}}).status_code == 403
     assert web.post("/api/refresh").status_code == 403
     assert op.writes == []
     assert web.post("/api/wp/1", json={"changes": {"subject": "x"}}, headers=H).json["sent"] is True
 
 
-def test_openproject_down_is_a_json_error(write_config):
+def test_openproject_down_is_a_json_error(write_config, web_as):
     write_config(url="http://127.0.0.1:9")
-    web = create_app().test_client()
+    web = web_as()
     r = web.get("/api/snapshot")
     assert r.status_code == 502 and "error" in r.json
     assert web.get("/api/wp/1").status_code == 502
 
 
-def test_config_broken_after_startup_is_a_json_error(write_config):
+def test_config_broken_after_startup_is_a_json_error(write_config, web_as):
     path = write_config()
-    web = create_app().test_client()
+    web = web_as()
     path.write_text("broken = [")
     r = web.post("/api/wp/1", json={"changes": {"subject": "x"}}, headers=H)
     assert r.status_code == 500 and "TOML" in r.json["error"]
 
 
-def test_archiving_is_a_biscuits_flag_and_never_reaches_openproject(write_config, op):
+def test_archiving_is_a_biscuits_flag_and_never_reaches_openproject(write_config, op, web_as):
     write_config("live", '"*"')
-    web = create_app().test_client()
+    web = web_as()
     assert web.get("/api/snapshot").json["archived_projects"] == []
     assert web.post("/api/project/1/archive", json={"archived": True}, headers=H).json["archived_projects"] == [1]
     assert web.post("/api/project/1/archive", json={"archived": True}, headers=H).json["archived_projects"] == [1]

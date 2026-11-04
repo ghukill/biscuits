@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, client, config, daemon, snapshot, writes
+from . import __version__, accounts, client, config, daemon, opadmin, writes
 
 
 def _load() -> config.Config:
@@ -35,7 +35,7 @@ class _Group(click.Group):
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
-        except (config.ConfigError, daemon.DaemonError, client.OPError) as e:
+        except (config.ConfigError, daemon.DaemonError, client.OPError, accounts.AccountError) as e:
             raise click.ClickException(str(e)) from e
 
 
@@ -142,9 +142,10 @@ def config_group():
 def config_init(url, env_file, host, port, base_path):
     """Create the config file (mode 600). Won't overwrite an existing one.
 
-    The API key is read from $OPENPROJECT_API_KEY or a hidden prompt, never from
-    a command-line flag, where it would show up in `ps` and shell history. New
-    configs start in preview mode unless --from-env says otherwise.
+    The admin token is read from $OPENPROJECT_API_KEY or a hidden prompt, never
+    from a command-line flag, where it would show up in `ps` and shell history. New
+    configs start in preview mode unless --from-env says otherwise. Login secrets
+    are generated for you.
     """
     path = config.config_path()
     if path.exists():
@@ -159,12 +160,22 @@ def config_init(url, env_file, host, port, base_path):
         raw = env.get("BISCUITS_WRITE_PROJECTS", "").replace(" ", "").split(",")
         projects = "*" if "*" in raw else [int(p) for p in raw if p.isdigit()]
     url = url or click.prompt("OpenProject URL")
-    key = key or click.prompt("OpenProject API key", hide_input=True)
+    key = key or click.prompt("OpenProject admin token", hide_input=True)
     config.write_new(path, config.render(url, key, mode, projects, host, port, base_path))
     cfg = _load()  # catches anything invalid straight away
     click.echo(f"Wrote {path}")
     click.echo(f"Writes: {_writes_summary(cfg)}")
-    click.echo("Next: `biscuits doctor`, then `biscuits serve`.")
+    click.echo("Next: `biscuits users add NAME --admin`, `biscuits doctor`, then `biscuits serve`.")
+
+
+@config_group.command("add-auth-keys")
+def config_add_auth_keys():
+    """Add login secrets to a config from before login existed."""
+    cfg = _load()
+    if config.add_auth_section(cfg.path):
+        click.echo(f"Added [auth] secrets to {cfg.path}. They apply after `biscuits restart`.")
+    else:
+        click.echo(f"{cfg.path} already has an [auth] section. Nothing changed.")
 
 
 @config_group.command("path")
@@ -175,11 +186,12 @@ def config_path():
 
 @config_group.command("show")
 def config_show():
-    """Print the effective settings, with the API key masked."""
+    """Print the effective settings, with secrets masked."""
     cfg = _load()
     click.echo(f"config file:  {cfg.path}")
     click.echo(f"openproject:  {cfg.op_url}")
-    click.echo(f"api key:      {'*' * 8}{cfg.op_api_key[-4:] if len(cfg.op_api_key) > 12 else ''}")
+    click.echo(f"admin token:  {'*' * 8}{cfg.op_admin_token[-4:] if len(cfg.op_admin_token) > 12 else ''}")
+    click.echo(f"login keys:   {'set' if cfg.secret_key and cfg.encryption_key else 'MISSING'}")
     click.echo(f"writes:       {_writes_summary(cfg)}")
     click.echo(f"listen:       {_url(cfg)}")
     click.echo(f"data dir:     {cfg.data_dir}")
@@ -205,8 +217,6 @@ def doctor():
     problem = config.permission_problem(cfg.path)
     report(None, problem) if problem else report(True, "config is private (no group/other access)")
     report(True, f"writes: {_writes_summary(cfg)}")
-    if not config.is_loopback(cfg.host):
-        report(None, f"listening on {cfg.host}, and biscuits has no login")
 
     try:
         cfg.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -215,13 +225,29 @@ def doctor():
         writable = False
     report(writable, f"data dir is writable: {cfg.data_dir}")
 
+    if cfg.secret_key and cfg.encryption_key:
+        report(True, "login secrets are set")
+    else:
+        report(False, "no [auth] secrets. Add them with `biscuits config add-auth-keys`")
+
+    users = accounts.all_users()
+    active = [u for u in users if u.disabled_at is None]
+    if not any(u.is_admin for u in active):
+        report(False, "no admin account, so nobody can manage logins. Run `biscuits users add NAME --admin`")
+    else:
+        report(True, f"{len(active)} active account(s)")
+    if cfg.encryption_key:
+        no_key = [u.username for u in active if not accounts.get_key(u)]
+        if no_key:
+            report(None, "no usable OpenProject key for: " + ", ".join(no_key))
+
     try:
-        me = client.get("/users/me")
-        report(True, f"OpenProject at {cfg.op_url} accepts the key, as {me.get('name')}")
-        if me.get("admin"):
-            report(None, "that account is an OpenProject admin")
-        total = client.get("/work_packages", {"filters": "[]", "pageSize": 1}).get("total")
-        report(True, f"{total} work packages visible")
+        me = opadmin.whoami()
+        report(True, f"OpenProject at {cfg.op_url} accepts the admin token, as {me.get('name')}")
+        if not me.get("admin"):
+            report(None, "that account isn't an OpenProject admin, so account management won't work")
+        if me.get("id") in {u.op_user_id for u in users}:
+            report(None, "the admin token belongs to someone with a biscuits account; a dedicated account is better")
     except client.OPError as e:
         report(False, f"OpenProject at {cfg.op_url}: {e}")
     sys.exit(1 if failed else 0)
@@ -236,38 +262,24 @@ def snapshot_group():
 
 @snapshot_group.command("info")
 def snapshot_info():
-    """Show what's in the snapshot cache file."""
+    """Show each account's cached snapshot. Snapshots are fetched when that person uses biscuits."""
     import time
 
-    path = _load().snapshot_file
-    try:
-        with open(path) as f:
-            blob = json.load(f)
-    except OSError:
-        raise click.ClickException(f"No snapshot at {path} yet") from None
-    except ValueError:
-        raise click.ClickException(f"{path} is damaged. `biscuits snapshot refresh` replaces it.") from None
-    data = blob["data"]
-    age = int(time.time() - blob["fetched_at"])
-    click.echo(f"file:           {path}")
-    click.echo(f"age:            {age}s")
-    click.echo(f"work packages:  {len(data['work_packages'])}")
-    click.echo(f"projects:       {len(data['projects'])}")
-    click.echo(f"users:          {len(data['users'])}")
-    click.echo(f"fetched as:     {data.get('me')}")
-
-
-@snapshot_group.command("refresh")
-def snapshot_refresh():
-    """Pull a fresh snapshot (GETs only) and write the cache file.
-
-    A running server keeps its copy in memory and refreshes on its own schedule;
-    this is mainly for warming the cache before a first start.
-    """
-    click.echo("Fetching from OpenProject…")
-    snapshot.refresh()
-    data, _, _ = snapshot.get()
-    click.echo(f"Done: {len(data['work_packages'])} work packages in {data['fetch_seconds']}s")
+    directory = _load().snapshot_dir
+    files = sorted(directory.glob("*.json")) if directory.exists() else []
+    if not files:
+        click.echo(f"No snapshots in {directory} yet")
+        return
+    for path in files:
+        try:
+            with open(path) as f:
+                blob = json.load(f)
+            data = blob["data"]
+            age = int(time.time() - blob["fetched_at"])
+            click.echo(f"account {path.stem}: {data.get('me')}, {len(data['work_packages'])} work packages, "
+                       f"{len(data['projects'])} projects, {age}s old")
+        except (OSError, ValueError, KeyError):
+            click.echo(f"account {path.stem}: damaged; biscuits will replace it")
 
 
 @main.group("writes")
@@ -300,6 +312,90 @@ def writes_log(lines, as_json):
         if e.get("ok") is False:
             state = "FAILED"
         wp = f" #{e['wp']}" if e.get("wp") else ""
-        click.echo(f"{e.get('ts')}  {e.get('op'):<8} {state:<9}{wp}  {e.get('method')} {e.get('path')}")
+        actor = e.get("actor") or {}
+        who = actor.get("username") or actor.get("system") or "-"
+        click.echo(f"{e.get('ts')}  {who:<16} {e.get('op'):<8} {state:<9}{wp}  {e.get('method')} {e.get('path')}")
         if e.get("error"):
             click.echo(f"    {e['error']}")
+
+
+# ---------- accounts ----------
+
+@main.group("users")
+def users_group():
+    """Manage biscuits accounts. The web screens do the same, once an admin exists."""
+
+
+def _need_user(username):
+    user = accounts.by_username(username)
+    if user is None:
+        raise click.ClickException(f"No account called {username}")
+    return user
+
+
+def _read_key(from_stdin):
+    if from_stdin:
+        return sys.stdin.readline().strip()
+    return click.prompt("OpenProject API key", hide_input=True)
+
+
+@users_group.command("add")
+@click.argument("username")
+@click.option("--admin", is_flag=True, help="Make this a biscuits admin.")
+@click.option("--name", help="Display name. [default: the username]")
+@click.option("--op-user", type=int, help="The OpenProject user id this account acts as.")
+@click.option("--key-stdin", is_flag=True, help="Read the API key from stdin (needs --op-user).")
+def users_add(username, admin, name, op_user, key_stdin):
+    """Create an account and print its temporary password."""
+    key = _read_key(key_stdin) if op_user is not None else None
+    if key is not None:  # check first, so a bad key doesn't leave a half-made account
+        name = name or accounts.validate_key(key, op_user)
+    user, password = accounts.create(username, display_name=name, is_admin=admin)
+    if key is not None:
+        user = accounts.set_key(user.id, key, op_user)
+    click.echo(f"Created {user.username}{' (admin)' if admin else ''}")
+    click.echo(f"Temporary password: {password}")
+    click.echo("They'll be asked to choose their own when they first sign in.")
+
+
+@users_group.command("list")
+def users_list():
+    """List accounts."""
+    for u in accounts.all_users():
+        flags = [f for f, on in (("admin", u.is_admin), ("disabled", u.disabled_at), ("new password pending", u.must_change_password)) if on]
+        op = f"OpenProject #{u.op_user_id} {u.op_user_name or ''}".strip() if u.op_user_id else "not linked"
+        key = "key ok" if accounts.get_key(u) else "NO KEY"
+        click.echo(f"{u.username:<24} {op:<36} {key:<8} {', '.join(flags)}")
+
+
+@users_group.command("set-key")
+@click.argument("username")
+@click.option("--op-user", type=int, help="Link to this OpenProject user id.")
+@click.option("--key-stdin", is_flag=True, help="Read the API key from stdin.")
+def users_set_key(username, op_user, key_stdin):
+    """Save an account's OpenProject API key, after checking whose it is."""
+    user = accounts.set_key(_need_user(username).id, _read_key(key_stdin), op_user)
+    click.echo(f"Saved. {user.username} acts as {user.op_user_name} (OpenProject #{user.op_user_id}).")
+
+
+@users_group.command("reset-password")
+@click.argument("username")
+def users_reset_password(username):
+    """Set a new temporary password, and sign the person out everywhere."""
+    click.echo(f"Temporary password: {accounts.reset_password(_need_user(username).id)}")
+
+
+@users_group.command("disable")
+@click.argument("username")
+def users_disable(username):
+    """Stop an account signing in. Doesn't touch OpenProject."""
+    accounts.set_disabled(_need_user(username).id, True)
+    click.echo(f"{username} is disabled.")
+
+
+@users_group.command("enable")
+@click.argument("username")
+def users_enable(username):
+    """Let a disabled account sign in again."""
+    accounts.set_disabled(_need_user(username).id, False)
+    click.echo(f"{username} is enabled.")

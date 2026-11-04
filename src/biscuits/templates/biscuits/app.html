@@ -21,8 +21,14 @@
     <div class="side-h">Projects</div>
     <nav class="side-nav side-projects" id="side-projects"></nav>
     <div class="side-foot" id="side-foot"></div>
+    <div class="side-account">
+      <a href="{{ url_for('biscuits.index') }}account" data-nav class="side-me" title="My account">{{ current_user.display_name }}</a>
+      {% if current_user.is_admin %}<a href="{{ url_for('biscuits.index') }}admin" data-nav title="Manage accounts">Accounts</a>{% endif %}
+      <button type="button" id="logout" class="linkish">Sign out</button>
+    </div>
   </aside>
   <div class="main">
+    {% if not request.is_secure %}<div class="https-note" title="Passwords and task data aren't encrypted by biscuits on this connection. A VPN such as Tailscale still encrypts them in transit.">This connection isn't HTTPS.</div>{% endif %}
     <header class="topbar">
       <div class="search-wrap">
         <label class="search">

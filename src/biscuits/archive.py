@@ -16,10 +16,10 @@ def ids() -> list[int]:
         return sorted(s.scalars(select(db.ArchivedProject.project_id)))
 
 
-def set_archived(project_id: int, archived: bool) -> None:
+def set_archived(project_id: int, archived: bool, by: int | None = None) -> None:
     with db.session() as s:
         row = s.get(db.ArchivedProject, project_id)
         if archived and row is None:
-            s.add(db.ArchivedProject(project_id=project_id, archived_at=datetime.now(timezone.utc)))
+            s.add(db.ArchivedProject(project_id=project_id, archived_at=datetime.now(timezone.utc), archived_by=by))
         elif not archived and row is not None:
             s.delete(row)

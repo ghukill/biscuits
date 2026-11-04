@@ -30,7 +30,7 @@ export function renderPane(id) {
   if (!r) {
     // Not in the snapshot (e.g. archived project): fetch it directly.
     document.body.classList.add("pane-open");
-    el.innerHTML = `<div class="p-empty">Task #${esc(id)} isn't in biscuits' copy of OpenProject. It may be in an archived project. <a href="${esc(S.snap.op_url)}/work_packages/${esc(id)}" target="_blank" rel="noopener">Open it in OpenProject ${ICON.ext}</a></div>`;
+    el.innerHTML = `<div class="p-empty">You can't see task #${esc(id)}. You may not have access to it, or it may be in a project archived in OpenProject. <a href="${esc(S.snap.op_url)}/work_packages/${esc(id)}" target="_blank" rel="noopener">Open it in OpenProject ${ICON.ext}</a></div>`;
     paneId = id;
     return;
   }
@@ -231,6 +231,7 @@ function activity(r) {
 }
 
 function compose(r) {
+  if (r.can_comment === false) return `<span class="muted">You don't have permission to comment on this task.</span>`;
   return `${avatar(S.me, "sm")}<textarea class="p-comment" rows="1" placeholder="Add a comment…" data-act="comment"></textarea><button class="btn sm primary" data-act="send" type="button">Comment</button>`;
 }
 

@@ -22,15 +22,19 @@ JSON API:
   POST /api/wp/<id>/comment  Add a comment          } live only for allow-listed
   POST /api/wp               Create a task/subtask  } projects, else preview
   GET  /api/assignees/<pid>  Who can be assigned in a project
-  GET  /api/writes           Recent write-log entries
+  GET  /api/writes           Recent write-log entries (admins: everyone's; others: their own)
   POST /api/project/<id>/archive   Archive or unarchive (biscuits only, not sent to OP)
+
+Login and the account and admin APIs are in auth.py, which also gates every
+route here. Every OpenProject call here uses the signed-in person's own key.
 """
 
 import time
 
-from flask import Blueprint, Response, abort, jsonify, render_template, request
+from flask import Blueprint, Response, g, jsonify, render_template, request
+from flask_login import current_user
 
-from . import archive, client, snapshot, writes
+from . import accounts, archive, client, opadmin, snapshot, writes
 
 bp = Blueprint(
     "biscuits",
@@ -39,6 +43,21 @@ bp = Blueprint(
     static_folder="static",
     static_url_path="/static",
 )
+
+
+class NoKey(RuntimeError):
+    """This account has no working OpenProject key yet."""
+
+
+def current_op() -> client.OP:
+    """The signed-in person's OpenProject connection."""
+    if "op" not in g:
+        key = accounts.get_key(current_user)
+        if not key:
+            raise NoKey()
+        g.op = client.OP(key, actor={"user_id": current_user.id, "username": current_user.username,
+                                     "op_user_id": current_user.op_user_id})
+    return g.op
 
 
 def _shell():
@@ -52,7 +71,7 @@ def index():
     return _shell()
 
 
-@bp.get("/<any(home, my, all, search, log, archived):view>")
+@bp.get("/<any(home, my, all, search, log, archived, admin, account):view>")
 @bp.get("/project/<int:pid>")
 @bp.get("/people/<int:uid>")
 def views(**_):
@@ -66,32 +85,32 @@ def _gate_info():
     return {"mode": mode, "write_projects": sorted(projects), "all_projects": everything}
 
 
-@bp.get("/api/snapshot")
-def api_snapshot():
-    try:
-        data, fetched_at, error = snapshot.get()
-    except client.OPError as e:
-        return jsonify(error=str(e)), 502
+def _snapshot_response():
+    op = current_op()
+    data, fetched_at, error = snapshot.get(current_user.id, op)
     if data is None:  # a concurrent first fetch failed
         return jsonify(error=error or "No data from OpenProject yet"), 502
+    visible = {p["id"] for p in data["projects"]}
     return jsonify(
         data=data,
         fetched_at=fetched_at,
         age_seconds=round(time.time() - fetched_at),
         stale_error=error,
         writes=_gate_info(),
-        archived_projects=archive.ids(),
+        archived_projects=[p for p in archive.ids() if p in visible],
+        account={"username": current_user.username, "is_admin": current_user.is_admin},
     )
+
+
+@bp.get("/api/snapshot")
+def api_snapshot():
+    return _snapshot_response()
 
 
 @bp.post("/api/refresh")
 def api_refresh():
-    _guard()
-    try:
-        snapshot.refresh()
-    except client.OPError as e:
-        return jsonify(ok=False, error=str(e)), 502
-    return api_snapshot()
+    snapshot.refresh(current_user.id, current_op())
+    return _snapshot_response()
 
 
 def _activity(a, names):
@@ -101,7 +120,7 @@ def _activity(a, names):
         "id": a.get("id"),
         "kind": "comment" if (c.get("raw") or "").strip() else "change",
         "user_id": uid,
-        "user": names.get(uid),
+        "user": names.get(uid) or opadmin.name_of(uid),
         "at": a.get("createdAt"),
         "comment_html": c.get("html") or "",
         "comment_raw": c.get("raw") or "",
@@ -111,14 +130,17 @@ def _activity(a, names):
 
 @bp.get("/api/wp/<int:wp_id>")
 def api_wp(wp_id):
+    op = current_op()
     try:
-        e = client.get(f"/work_packages/{wp_id}")
-        acts = client.get(f"/work_packages/{wp_id}/activities")
+        e = op.get(f"/work_packages/{wp_id}")
+        acts = op.get(f"/work_packages/{wp_id}/activities")
     except client.OPError as err:
-        return jsonify(error=str(err)), err.status or 502
-    data, _, _ = snapshot.get()
+        if err.status in (403, 404):
+            return jsonify(error="You don't have access to this task."), err.status
+        raise
+    data, _, _ = snapshot.get(current_user.id, op)
     names = {u["id"]: u["name"] for u in (data or {}).get("users", [])}
-    row = snapshot.upsert(e)
+    row = snapshot.upsert(current_user.id, e)
     emb = e.get("_embedded") or {}
     return jsonify(
         row=row,
@@ -130,26 +152,20 @@ def api_wp(wp_id):
     )
 
 
-def _guard():
-    # Cheap CSRF guard: browsers won't send a custom header cross-site
-    # without a CORS preflight, which we never approve.
-    if request.headers.get("X-Biscuits") != "1":
-        abort(403)
-
-
 def _write_response(out):
     row = None
     res = out.get("result")
     if out["sent"] and isinstance(res, dict) and res.get("_type") == "WorkPackage":
-        row = snapshot.upsert(res)
+        row = snapshot.upsert(current_user.id, res)
     return jsonify(ok=True, sent=out["sent"], reason=out["reason"], plan=out["plan"], row=row)
 
 
 def _write(fn, *args):
-    _guard()
     try:
-        return _write_response(fn(*args))
+        return _write_response(fn(current_op(), *args))
     except writes.WriteError as e:
+        if e.status == 401:  # OP rejected their key, not "you need to log in"
+            raise client.OPError(str(e), status=401) from e
         return jsonify(ok=False, error=str(e)), e.status if 400 <= e.status < 600 else 400
 
 
@@ -170,25 +186,28 @@ def api_create():
 
 @bp.post("/api/project/<int:pid>/archive")
 def api_archive(pid):
-    _guard()
     archived = (request.get_json(silent=True) or {}).get("archived")
     if not isinstance(archived, bool):
         return jsonify(ok=False, error="archived must be true or false"), 400
-    archive.set_archived(pid, archived)
+    # Archiving is shared, so it takes a biscuits admin or someone who may edit
+    # the project in OpenProject.
+    if not current_user.is_admin and "update" not in (current_op().get(f"/projects/{pid}").get("_links") or {}):
+        return jsonify(ok=False, error="You don't have permission to archive this project."), 403
+    archive.set_archived(pid, archived, by=current_user.id)
     return jsonify(ok=True, archived_projects=archive.ids())
 
 
 @bp.get("/api/assignees/<int:pid>")
 def api_assignees(pid):
     """People OP will accept as assignee in this project (its members)."""
-    try:
-        els = client.get_all(f"/projects/{pid}/available_assignees")
-    except client.OPError as e:
-        return jsonify(error=str(e)), e.status or 502
-    return jsonify(ids=[u["id"] for u in els if u.get("_type") == "User"])
+    els = current_op().get_all(f"/projects/{pid}/available_assignees")
+    people = [{"id": u["id"], "name": u.get("name")} for u in els if u.get("_type") == "User"]
+    return jsonify(ids=[u["id"] for u in people], people=people)
 
 
 @bp.get("/api/writes")
 def api_writes():
-    return jsonify(entries=writes.recent(200), writes=_gate_info())
+    # Entries name tasks, so non-admins only get their own.
+    entries = writes.recent(200, None if current_user.is_admin else current_user.id)
+    return jsonify(entries=entries, writes=_gate_info())
 

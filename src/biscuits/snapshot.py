@@ -3,12 +3,18 @@
 The whole instance is small (~2.2k WPs), so we pull everything and do all
 tree-building / filtering / sorting locally.
 
+Each account has its own snapshot, fetched with its own key, so it holds exactly
+what OpenProject lets that person see. A snapshot is only ever fetched during
+that person's own requests.
+
 - In-memory copy is served instantly; refreshed when older than TTL.
-- On-disk copy (snapshot.json in the data dir) means a server restart shows
-  data immediately, then refreshes.
-- Only one refresh runs at a time.
+- On-disk copy (snapshots/<account id>.json in the data dir, mode 600) means a
+  server restart shows data immediately, then refreshes.
+- Only one refresh per account runs at a time.
 - After a live write, `upsert()` patches the affected row in place so the UI
   doesn't need a full re-pull.
+- If OpenProject stops accepting the key, the copy is dropped: someone locked in
+  OpenProject must not go on reading a cached copy.
 """
 
 import json
@@ -35,8 +41,21 @@ REOPEN_STATUS_NAME = "New"
 _SECTION_RE = re.compile(r"^\[(.*)\]$", re.S)
 
 _lock = threading.Lock()
-_refreshing = threading.Lock()
-_state = {"data": None, "fetched_at": 0.0, "error": None}
+_states: dict[int, "_State"] = {}
+
+
+class _State:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.refreshing = threading.Lock()
+        self.data = None
+        self.fetched_at = 0.0
+        self.error = None
+
+
+def _state(uid) -> _State:
+    with _lock:
+        return _states.setdefault(uid, _State())
 
 
 def _id_from_href(href):
@@ -69,6 +88,7 @@ def make_row(e, status_meta, prio_meta):
     sm = status_meta.get(sid, {})
     subject = e.get("subject") or ""
     sec = section_name(subject) if (not parent_id and tname == "Summary task") else None
+    links = e.get("_links") or {}
     # OP keeps computing derived dates from subtasks even for a manually
     # scheduled parent. There, a blank own date means blank: it has to stay blank.
     rollup = not e.get("scheduleManually")
@@ -93,6 +113,9 @@ def make_row(e, status_meta, prio_meta):
         "updated_at": e.get("updatedAt"),
         "created": (e.get("createdAt") or "")[:10],
         "parent_id": parent_id,
+        # What this person's OP permissions allow, so the UI can say so up front.
+        "can_edit": "update" in links or "updateImmediately" in links,
+        "can_comment": "addComment" in links,
     }
 
 
@@ -112,39 +135,55 @@ def _metas(statuses, priorities):
     return status_meta, prio_meta
 
 
-def _fetch():
+def _people(op):
+    """Who this person can see. Only OP admins may list /users."""
+    try:
+        return op.get_all("/users")
+    except client.OPError as e:
+        if e.status == 401:
+            raise
+    try:
+        return op.get_all("/principals")
+    except client.OPError as e:
+        if e.status == 401:
+            raise
+        return []
+
+
+def _fetch(op):
     with ThreadPoolExecutor(max_workers=5) as ex:
-        f_wps = ex.submit(client.get_all, "/work_packages", {"filters": "[]"})
-        f_projects = ex.submit(client.get_all, "/projects", {"filters": "[]"})
-        f_statuses = ex.submit(client.get, "/statuses")
-        f_priorities = ex.submit(client.get, "/priorities")
-        f_types = ex.submit(client.get, "/types")
-        f_users = ex.submit(client.get_all, "/users")
-        f_me = ex.submit(client.get, "/users/me")
+        f_wps = ex.submit(op.get_all, "/work_packages", {"filters": "[]"})
+        f_projects = ex.submit(op.get_all, "/projects", {"filters": "[]"})
+        f_statuses = ex.submit(op.get, "/statuses")
+        f_priorities = ex.submit(op.get, "/priorities")
+        f_types = ex.submit(op.get, "/types")
+        f_users = ex.submit(_people, op)
+        f_me = ex.submit(op.get, "/users/me")
         wps, projects = f_wps.result(), f_projects.result()
         statuses = f_statuses.result()["_embedded"]["elements"]
         priorities = f_priorities.result()["_embedded"]["elements"]
         types = f_types.result()["_embedded"]["elements"]
-        try:
-            users = f_users.result()
-        except client.OPError:  # non-admin keys can't list users
-            users = []
+        users = f_users.result()
         me = f_me.result()
 
     status_meta, prio_meta = _metas(statuses, priorities)
     by_name = {v["name"]: k for k, v in status_meta.items()}
+    people = {u["id"]: {"id": u["id"], "name": u["name"], "status": u.get("status")}
+              for u in users if u.get("_type") == "User"}
+    if me.get("id") is not None:
+        people.setdefault(me["id"], {"id": me["id"], "name": me.get("name"), "status": me.get("status")})
     return {
         "work_packages": [make_row(e, status_meta, prio_meta) for e in wps],
         "projects": [
             {"id": p["id"], "name": p["name"], "identifier": p.get("identifier"),
-             "active": p.get("active")}
+             "active": p.get("active"),
+             "can_manage": "update" in (p.get("_links") or {})}
             for p in projects
         ],
         "statuses": [dict(id=k, **v) for k, v in status_meta.items()],
         "priorities": [dict(id=k, **v) for k, v in prio_meta.items()],
         "types": [{"id": t["id"], "name": t["name"]} for t in types],
-        "users": [{"id": u["id"], "name": u["name"], "status": u.get("status")}
-                  for u in users if u.get("_type") == "User"],
+        "users": list(people.values()),
         "complete_status_id": by_name.get(COMPLETE_STATUS_NAME),
         "reopen_status_id": by_name.get(REOPEN_STATUS_NAME),
         "op_url": client.web_url(),
@@ -153,73 +192,97 @@ def _fetch():
     }
 
 
-def _load_disk():
+def _path(uid):
+    return config.load().snapshot_dir / f"{int(uid)}.json"
+
+
+def _load_disk(uid, st):
     try:
-        with open(config.load().snapshot_file) as f:
+        with open(_path(uid)) as f:
             blob = json.load(f)
-        _state.update(data=blob["data"], fetched_at=blob["fetched_at"])
+        st.data, st.fetched_at = blob["data"], blob["fetched_at"]
     except (OSError, ValueError, KeyError):
         pass
 
 
-def _save_disk():
-    path = config.load().snapshot_file
+def _save_disk(uid, st):
+    path = _path(uid)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = f"{path}.tmp"
     # Task data is private: 0600 from the first byte.
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        json.dump({"fetched_at": _state["fetched_at"], "data": _state["data"]}, f)
+        json.dump({"fetched_at": st.fetched_at, "data": st.data}, f)
     os.replace(tmp, path)
 
 
-def refresh():
+def forget(uid):
+    """Drop an account's snapshot, in memory and on disk."""
+    with _lock:
+        _states.pop(uid, None)
+    try:
+        os.unlink(_path(uid))
+    except OSError:
+        pass
+
+
+def refresh(uid, op):
     """Fetch a fresh snapshot (blocking). Concurrent callers wait for one fetch."""
-    if not _refreshing.acquire(blocking=False):
-        with _refreshing:  # someone else is fetching; wait for them
+    st = _state(uid)
+    if not st.refreshing.acquire(blocking=False):
+        with st.refreshing:  # someone else is fetching; wait for them
             return
     try:
         t0 = time.time()
-        data = _fetch()
+        data = _fetch(op)
+        with st.lock:
+            data["fetch_seconds"] = round(time.time() - t0, 2)
+            st.data, st.fetched_at, st.error = data, time.time(), None
         with _lock:
-            _state.update(data=data, fetched_at=time.time(), error=None)
-            _state["data"]["fetch_seconds"] = round(time.time() - t0, 2)
-        _save_disk()
+            current = _states.get(uid) is st
+        if current:  # not forgotten while we were fetching
+            _save_disk(uid, st)
+    except client.OPError as e:
+        if e.status == 401:
+            forget(uid)
+        st.error = str(e)
+        raise
     except Exception as e:  # keep serving the stale copy
-        _state["error"] = str(e)
+        st.error = str(e)
         raise
     finally:
-        _refreshing.release()
+        st.refreshing.release()
 
 
-def get(max_age=TTL_SECONDS):
+def get(uid, op, max_age=TTL_SECONDS):
     """Return (data, fetched_at, error). Fetches if missing or too old."""
-    if _state["data"] is None:
-        _load_disk()
-    age = time.time() - _state["fetched_at"]
-    if _state["data"] is None:
-        refresh()  # nothing to show yet: must block
-    elif age > max_age and not _refreshing.locked():
+    st = _state(uid)
+    if st.data is None:
+        _load_disk(uid, st)
+    age = time.time() - st.fetched_at
+    if st.data is None:
+        refresh(uid, op)  # nothing to show yet: must block
+    elif age > max_age and not st.refreshing.locked():
         # stale-while-revalidate: serve what we have, refresh in background
-        threading.Thread(target=_safe_refresh, daemon=True).start()
-    return _state["data"], _state["fetched_at"], _state["error"]
+        threading.Thread(target=_safe_refresh, args=(uid, op), daemon=True).start()
+    return st.data, st.fetched_at, st.error
 
 
-def row_from_element(e):
+def _row_from_element(uid, e):
     """Turn a WP HAL element into a biscuits row using the cached metadata."""
-    data = _state["data"] or {}
+    data = _state(uid).data or {}
     status_meta = {s["id"]: s for s in data.get("statuses", [])}
     prio_meta = {p["id"]: p for p in data.get("priorities", [])}
     return make_row(e, status_meta, prio_meta)
 
 
-def upsert(e):
-    """Patch (or add) one WP in the cached snapshot after a live write."""
-    row = row_from_element(e)
-    with _lock:
-        data = _state["data"]
-        if data is not None:
-            wps = data["work_packages"]
+def upsert(uid, e):
+    """Patch (or add) one WP in this account's snapshot after a live write."""
+    row = _row_from_element(uid, e)
+    st = _state(uid)
+    with st.lock:
+        if st.data is not None:
+            wps = st.data["work_packages"]
             for i, r in enumerate(wps):
                 if r["id"] == row["id"]:
                     wps[i] = row
@@ -229,8 +292,8 @@ def upsert(e):
     return row
 
 
-def _safe_refresh():
+def _safe_refresh(uid, op):
     try:
-        refresh()
+        refresh(uid, op)
     except Exception:
         pass

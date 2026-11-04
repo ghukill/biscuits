@@ -7,53 +7,53 @@ import pytest
 from biscuits import config, snapshot, writes
 
 
-def test_preview_sends_nothing_but_is_logged(write_config, op):
+def test_preview_sends_nothing_but_is_logged(write_config, op, conn):
     write_config("preview", '"*"')
-    out = writes.update(1, {"subject": "New name"})
+    out = writes.update(conn, 1, {"subject": "New name"})
     assert out["sent"] is False and out["reason"] == "preview mode"
     assert op.writes == []
     assert writes.recent(1)[0]["sent"] is False
 
 
-def test_live_only_for_allow_listed_projects(write_config, op):
+def test_live_only_for_allow_listed_projects(write_config, op, conn):
     write_config("live", "[1]")
-    assert writes.update(1, {"subject": "x"})["sent"] is True
-    assert writes.update(2, {"subject": "x"})["sent"] is False  # stub: WP 2 is in project 2
+    assert writes.update(conn, 1, {"subject": "x"})["sent"] is True
+    assert writes.update(conn, 2, {"subject": "x"})["sent"] is False  # stub: WP 2 is in project 2
     assert [w[1] for w in op.writes] == ["/api/v3/work_packages/1"]
 
 
-def test_moving_under_a_parent_needs_both_projects_allowed(write_config, op):
+def test_moving_under_a_parent_needs_both_projects_allowed(write_config, op, conn):
     write_config("live", "[1]")
-    assert writes.update(1, {"parent_id": 2})["sent"] is False
+    assert writes.update(conn, 1, {"parent_id": 2})["sent"] is False
     write_config("live", "[1, 2]")
-    assert writes.update(1, {"parent_id": 2})["sent"] is True
+    assert writes.update(conn, 1, {"parent_id": 2})["sent"] is True
 
 
-def test_star_allows_everything(write_config, op):
+def test_star_allows_everything(write_config, op, conn):
     write_config("live", '"*"')
-    assert writes.comment(5, "hello")["sent"] is True
+    assert writes.comment(conn, 5, "hello")["sent"] is True
     assert op.writes[0][:2] == ("POST", "/api/v3/work_packages/5/activities")
 
 
-def test_gate_change_applies_to_the_next_write(write_config, op):
+def test_gate_change_applies_to_the_next_write(write_config, op, conn):
     write_config("live", '"*"')
-    assert writes.update(1, {"subject": "x"})["sent"] is True
+    assert writes.update(conn, 1, {"subject": "x"})["sent"] is True
     write_config("preview", '"*"')
-    assert writes.update(1, {"subject": "y"})["sent"] is False
+    assert writes.update(conn, 1, {"subject": "y"})["sent"] is False
     assert len(op.writes) == 1
 
 
-def test_broken_config_blocks_writes(write_config, op):
+def test_broken_config_blocks_writes(write_config, op, conn):
     path = write_config("live", '"*"')
     path.write_text("broken = [")
     with pytest.raises(config.ConfigError):
-        writes.update(1, {"subject": "x"})
+        writes.update(conn, 1, {"subject": "x"})
     assert op.writes == []
 
 
-def test_write_log_is_private_and_excludes_the_key(write_config, op):
+def test_write_log_is_private_and_excludes_the_key(write_config, op, conn):
     write_config("live", '"*"')
-    writes.update(1, {"subject": "x"})
+    writes.update(conn, 1, {"subject": "x"})
     log = config.load().write_log_file
     assert log.stat().st_mode & 0o077 == 0
     assert "secret-key-value" not in log.read_text()
@@ -65,32 +65,32 @@ def test_no_delete_operation_exists():
 
 
 @pytest.mark.parametrize("changes", [{"subject": " "}, {"nope": 1}, {"due": "soon"}, {}])
-def test_bad_edits_are_refused(write_config, op, changes):
+def test_bad_edits_are_refused(write_config, op, conn, changes):
     write_config("live", '"*"')
     with pytest.raises(writes.WriteError):
-        writes.update(1, changes)
+        writes.update(conn, 1, changes)
     assert op.writes == []
 
 
-def test_date_edits_take_a_rolled_up_parent_out_of_automatic_scheduling(write_config, op):
+def test_date_edits_take_a_rolled_up_parent_out_of_automatic_scheduling(write_config, op, conn):
     write_config("live", '"*"')
-    writes.update(1, {"due": None, "start": None})  # stub WPs aren't scheduleManually
+    writes.update(conn, 1, {"due": None, "start": None})  # stub WPs aren't scheduleManually
     body = op.writes[0][2]
     assert body["dueDate"] is None and body["startDate"] is None
     assert body["scheduleManually"] is True
 
 
-def test_date_edits_keep_weekend_dates(write_config, op):
+def test_date_edits_keep_weekend_dates(write_config, op, conn):
     write_config("live", '"*"')
-    writes.update(1, {"due": "2026-11-21"})
+    writes.update(conn, 1, {"due": "2026-11-21"})
     assert op.writes[0][2]["ignoreNonWorkingDays"] is True
-    writes.create({"subject": "x", "project_id": 1, "due": "2026-11-21"})
+    writes.create(conn, {"subject": "x", "project_id": 1, "due": "2026-11-21"})
     assert op.writes[1][2]["ignoreNonWorkingDays"] is True
 
 
-def test_other_edits_leave_scheduling_alone(write_config, op):
+def test_other_edits_leave_scheduling_alone(write_config, op, conn):
     write_config("live", '"*"')
-    writes.update(1, {"subject": "x"})
+    writes.update(conn, 1, {"subject": "x"})
     assert "scheduleManually" not in op.writes[0][2]
     assert "ignoreNonWorkingDays" not in op.writes[0][2]
 

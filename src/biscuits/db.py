@@ -12,7 +12,8 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from sqlalchemy import DateTime, Integer, create_engine
+from flask_login import UserMixin
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -35,6 +36,36 @@ class ArchivedProject(Base):
 
     project_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     archived_at = mapped_column(DateTime, nullable=False)
+    archived_by: Mapped[int | None] = mapped_column(Integer)
+
+
+class User(UserMixin, Base):
+    """A biscuits account, linked to the OpenProject user it acts as."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # biscuits admin: separate from being an OpenProject admin.
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Part of the login session, so bumping it signs the person out everywhere.
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    op_user_id: Mapped[int | None] = mapped_column(Integer, unique=True)
+    op_user_name: Mapped[str | None] = mapped_column(String(255))
+    op_key_enc: Mapped[str | None] = mapped_column(Text)  # encrypted; see accounts.py
+    created_at = mapped_column(DateTime, nullable=False)
+    last_login_at = mapped_column(DateTime)
+    disabled_at = mapped_column(DateTime)
+
+    @property
+    def is_active(self):
+        return self.disabled_at is None
+
+    def get_id(self):
+        return f"{self.id}:{self.session_version}"
 
 
 def engine() -> Engine:

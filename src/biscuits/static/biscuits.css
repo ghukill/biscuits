@@ -483,3 +483,44 @@ table.log summary { cursor: pointer; color: var(--muted); font-size: .76rem; }
 .view > .p-banner { margin: 0 0 .8rem; }
 .p-banner svg { width: 15px; height: 15px; vertical-align: -3px; }
 .arch-none { padding: 1rem 1.2rem; }
+
+/* Sign-in and account */
+.side-account { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .7rem; padding: .5rem 1.1rem .8rem; border-top: 1px solid var(--line); font-size: .8rem; }
+.side-account a, .linkish { color: var(--muted); font: inherit; font-weight: 600; background: none; border: 0; padding: 0; cursor: pointer; }
+.side-account a:hover, .linkish:hover { color: var(--text); text-decoration: underline; }
+.side-account .side-me { color: var(--text); flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.side-collapsed .side-account { display: none; }
+.https-note { background: var(--bg-2); color: var(--muted); font-size: .74rem; text-align: center; padding: .12rem .5rem; }
+body.auth-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; overflow: auto; }
+.auth-card { width: min(370px, 92vw); padding: 1.6rem 1.7rem; }
+.auth-brand { display: flex; align-items: center; gap: .55rem; font-weight: 800; font-size: 1.2rem; margin-bottom: 1.1rem; }
+.auth-brand .brand-mark svg { width: 30px; height: 30px; display: block; }
+.auth-card form, .admin-form { display: flex; flex-direction: column; gap: .7rem; }
+.auth-card form[hidden], .admin-form[hidden], .auth-card label[hidden], .admin-new-op[hidden] { display: none; }
+.auth-card label, .admin-form label:not(.toggle) { display: flex; flex-direction: column; gap: .2rem; font-size: .84rem; font-weight: 600; }
+.auth-card input, .admin-form input:not([type=checkbox]), .admin-form select { font: 400 .95rem var(--font); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: .45rem .6rem; }
+.auth-card input:focus, .admin-form input:focus, .admin-form select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.auth-card .btn { justify-content: center; }
+.auth-error { color: var(--rose); font-size: .86rem; }
+.auth-error[hidden] { display: none; }
+.auth-lead { margin: 0; }
+.auth-note { font-size: .8rem; margin: .9rem 0 0; }
+.auth-https { margin-top: 1rem; background: transparent; }
+
+/* Accounts */
+.admin-tools { padding: 0 0 .7rem; justify-content: flex-end; }
+.admin-card { margin-bottom: .8rem; padding: .9rem 1.2rem; }
+.admin-card h2 { margin: 0; font-size: 1.05rem; }
+.admin-card.is-disabled { opacity: .65; }
+.admin-card .card-note { margin: .3rem 0; }
+.admin-user-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.admin-seen { margin-left: auto; font-size: .8rem; }
+.kv { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: .25rem .8rem; margin: .6rem 0; font-size: .9rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; overflow-wrap: anywhere; }
+.admin-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.admin-slot:not(:empty) { margin-top: .8rem; padding-top: .8rem; border-top: 1px solid var(--line); }
+.admin-new-op { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.key-val, .admin-secret code { font-size: .85rem; overflow-wrap: anywhere; }
+.cmd { margin: 0; padding: .5rem .7rem; background: var(--bg-2); border-radius: 8px; font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.admin-secret { margin-bottom: .8rem; }

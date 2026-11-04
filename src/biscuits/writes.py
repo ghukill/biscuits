@@ -11,8 +11,11 @@ when the mode is live AND every project it touches is allow-listed. Otherwise
 the plan is logged and returned unsent, and the UI applies the change locally
 as a preview.
 
+Writes go out with the acting user's own key, so OpenProject applies their
+permissions on top of this gate and records them as the author.
+
 There is no delete operation, on purpose. Every plan, sent or not, is appended
-to write-log.jsonl in the data dir for review.
+to write-log.jsonl in the data dir for review, with who made it.
 """
 
 import json
@@ -67,26 +70,30 @@ def _log(entry):
             os.chmod(path, 0o600)
 
 
-def recent(n=100):
+def recent(n=100, user_id=None):
+    """Newest entries first. With user_id, only those made by that account."""
     try:
         with open(config.load().write_log_file) as f:
-            lines = f.readlines()[-n:]
+            lines = f.readlines()
     except OSError:
         return []
     out = []
     for ln in reversed(lines):
+        if len(out) >= n:
+            break
         try:
-            out.append(json.loads(ln))
+            entry = json.loads(ln)
         except ValueError:
-            pass
+            continue
+        if user_id is None or (entry.get("actor") or {}).get("user_id") == user_id:
+            out.append(entry)
     return out
 
 
-def _send(method, path, body):
-    base, key = client.config()
+def _send(op, method, path, body):
     req = urllib.request.Request(
-        f"{base}/api/v3{path}", method=method, data=json.dumps(body).encode(),
-        headers={"Authorization": client.auth_header(key),
+        f"{client.base_url()}/api/v3{path}", method=method, data=json.dumps(body).encode(),
+        headers={"Authorization": client.auth_header(op.key),
                  "Content-Type": "application/json", "Accept": "application/hal+json"},
     )
     try:
@@ -102,7 +109,7 @@ def _send(method, path, body):
         raise WriteError(f"Couldn't reach OpenProject: {e.reason}", status=502) from e
 
 
-def _execute(op, method, path, body, projects_touched, meta=None):
+def _execute(conn, op, method, path, body, projects_touched, meta=None):
     g = gate()
     mode, allowed, everything = g
     touched = {p for p in projects_touched if p is not None}
@@ -114,11 +121,11 @@ def _execute(op, method, path, body, projects_touched, meta=None):
         send, reason = True, "live"
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "op": op, "sent": send,
              "reason": reason, "method": method, "path": path, "body": body,
-             "projects": sorted(touched), **(meta or {})}
+             "projects": sorted(touched), "actor": conn.actor, **(meta or {})}
     result = None
     if send:
         try:
-            result = _send(method, path, body)
+            result = _send(conn, method, path, body)
             entry["ok"] = True
         except WriteError as e:
             entry.update(ok=False, error=str(e))
@@ -129,9 +136,26 @@ def _execute(op, method, path, body, projects_touched, meta=None):
             "plan": {"method": method, "path": path, "body": body}, "result": result}
 
 
-def _wp(wp_id):
+def account_write(conn, op, method, path, body, logged_body):
+    """An account-management write (opadmin.py). There's no project to gate on, but
+    preview mode still means nothing is sent. The log gets logged_body, not body."""
+    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "op": op, "method": method, "path": path,
+             "body": logged_body, "projects": [], "actor": conn.actor}
+    if gate()[0] != "live":
+        _log({**entry, "sent": False, "reason": "preview mode"})
+        raise WriteError("biscuits is in preview mode, so this wasn't sent to OpenProject")
     try:
-        return client.get(f"/work_packages/{int(wp_id)}")
+        result = _send(conn, method, path, body)
+    except WriteError as e:
+        _log({**entry, "sent": True, "reason": "live", "ok": False, "error": str(e)})
+        raise
+    _log({**entry, "sent": True, "reason": "live", "ok": True})
+    return result
+
+
+def _wp(conn, wp_id):
+    try:
+        return conn.get(f"/work_packages/{int(wp_id)}")
     except client.OPError as e:
         raise WriteError(f"Couldn't load #{wp_id}: {e}", status=e.status or 502)
 
@@ -154,9 +178,9 @@ def _int_or_none(v, name):
         raise WriteError(f"{name} must be an id")
 
 
-def update(wp_id, changes):
+def update(conn, wp_id, changes):
     """PATCH a work package. `changes` uses biscuits field names."""
-    cur = _wp(wp_id)
+    cur = _wp(conn, wp_id)
     body = {"lockVersion": cur["lockVersion"]}
     links = {}
     touched = {_id(cur["_links"]["project"]["href"])}
@@ -184,7 +208,7 @@ def update(wp_id, changes):
             if v == int(wp_id):
                 raise WriteError("A task can't be its own parent")
             if v:
-                touched.add(_id(_wp(v)["_links"]["project"]["href"]))
+                touched.add(_id(_wp(conn, v)["_links"]["project"]["href"]))
             links["parent"] = {"href": f"/api/v3/work_packages/{v}" if v else None}
         else:
             raise WriteError(f"Field '{k}' can't be edited from biscuits yet")
@@ -201,21 +225,21 @@ def update(wp_id, changes):
         body["_links"] = links
     if len(body) == 1:
         raise WriteError("Nothing to change")
-    return _execute("update", "PATCH", f"/work_packages/{int(wp_id)}", body, touched,
+    return _execute(conn, "update", "PATCH", f"/work_packages/{int(wp_id)}", body, touched,
                     {"wp": int(wp_id), "subject_before": cur.get("subject")})
 
 
-def comment(wp_id, text):
+def comment(conn, wp_id, text):
     text = str(text or "").strip()
     if not text:
         raise WriteError("Comment is empty")
-    cur = _wp(wp_id)
+    cur = _wp(conn, wp_id)
     body = {"comment": {"raw": text[:MAX_TEXT]}}
-    return _execute("comment", "POST", f"/work_packages/{int(wp_id)}/activities", body,
+    return _execute(conn, "comment", "POST", f"/work_packages/{int(wp_id)}/activities", body,
                     {_id(cur["_links"]["project"]["href"])}, {"wp": int(wp_id)})
 
 
-def create(fields):
+def create(conn, fields):
     """Create a task (optionally as a sub-task). OP quirk: never send description null."""
     subject = str(fields.get("subject") or "").strip()
     if not subject:
@@ -223,7 +247,7 @@ def create(fields):
     project_id = _int_or_none(fields.get("project_id"), "Project")
     parent_id = _int_or_none(fields.get("parent_id"), "Parent")
     if parent_id:
-        project_id = _id(_wp(parent_id)["_links"]["project"]["href"])
+        project_id = _id(_wp(conn, parent_id)["_links"]["project"]["href"])
     if not project_id:
         raise WriteError("Pick a project for the new task")
     links = {"project": {"href": f"/api/v3/projects/{project_id}"},
@@ -240,5 +264,5 @@ def create(fields):
         body["ignoreNonWorkingDays"] = True  # keep the date as given, see update()
     if fields.get("description"):
         body["description"] = {"raw": str(fields["description"])[:MAX_TEXT]}
-    return _execute("create", "POST", "/work_packages", body, {project_id},
+    return _execute(conn, "create", "POST", "/work_packages", body, {project_id},
                     {"parent": parent_id})

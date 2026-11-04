@@ -1,17 +1,21 @@
 // biscuits shell: boot, routing, sidebar, typeahead search, keyboard.
 
 import { $, $$, esc, avatar, hue, isTyping, friendlyDate, ICON, debounce } from "./util.js";
-import { S, loadSnapshot, refresh, onChange, activeProjects, archivedProjects, archivedInOP, workingRows, liveProject, row, toggleComplete } from "./store.js";
+import { S, post, loadSnapshot, refresh, onChange, activeProjects, archivedProjects, archivedInOP, workingRows, liveProject, row, toggleComplete } from "./store.js";
 import { setHandler, route, currentTask, openTask, closeTask, go, href } from "./nav.js";
 import { renderPane, wirePane, hooks, paneOpen, followId } from "./pane.js";
 import { viewHome, viewPeople, viewProject, viewSearch, viewLog, viewArchived, searchIndex } from "./views.js";
 import { viewAll, patchAll, reselectAll, unmountAll } from "./all.js";
+import { viewAccount, viewAdmin } from "./admin.js";
 import { popoverOpen, closePopover, toast } from "./ui.js";
 
 const view = $("#view");
 let lastKey = "";
 
 function routeKey(rt) { return `${rt.name}:${rt.id || ""}:${rt.name === "project" ? rt.q.get("view") || "" : ""}:${rt.name === "search" ? rt.q.get("q") : ""}`; }
+
+// These fetch their own data and hold forms: store changes mustn't redraw them.
+const OWN_DATA = new Set(["log", "admin", "account"]);
 
 function renderView(rt) {
   if (rt.name !== "all") unmountAll();
@@ -23,6 +27,8 @@ function renderView(rt) {
     case "search": return viewSearch(view, rt.q);
     case "log": return viewLog(view);
     case "archived": return viewArchived(view);
+    case "admin": return viewAdmin(view);
+    case "account": return viewAccount(view);
     default: return viewHome(view);
   }
 }
@@ -40,7 +46,7 @@ function render({ paneOnly } = {}) {
   } else if (paneOnly) {
     if (rt.name === "all") reselectAll();
     else $$(".tl-row, .bcard", view).forEach((el) => el.classList.toggle("sel", +el.dataset.id === currentTask()));
-  } else if (rt.name !== "log") {
+  } else if (!OWN_DATA.has(rt.name)) {
     renderView(rt);
   }
   renderPane(currentTask());
@@ -51,7 +57,7 @@ function render({ paneOnly } = {}) {
 function titleFor(rt) {
   if (rt.name === "project") return (S.projects.get(rt.id) || {}).name || "Project";
   if (rt.name === "people") return (S.users.get(rt.id) || {}).name || "People";
-  return { my: "My tasks", all: "All tasks", search: "Search", log: "Write log", archived: "Archived projects" }[rt.name] || "Home";
+  return { my: "My tasks", all: "All tasks", search: "Search", log: "Write log", archived: "Archived projects", admin: "Accounts", account: "My account" }[rt.name] || "Home";
 }
 
 // ---------- sidebar ----------
@@ -156,6 +162,11 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "?" ) { toast("Shortcuts: / search · ↑↓ or j/k move between tasks · Ctrl+Enter complete · Esc close · double-click a name to rename", { ms: 9000 }); }
 });
 
+$("#logout").addEventListener("click", async () => {
+  await post("/api/logout", {});
+  location.href = href("/login");
+});
+
 $("#side-toggle").addEventListener("click", () => {
   document.body.classList.toggle("side-collapsed");
   localStorage.setItem("biscuits.side", document.body.classList.contains("side-collapsed") ? "0" : "1");
@@ -168,7 +179,7 @@ onChange((ev) => {
   if (ev.type === "idchange") followId(ev.from, ev.to);
   const rt = route();
   if (rt.name === "all") patchAll(ev);
-  else if (rt.name !== "log") renderView(rt);
+  else if (!OWN_DATA.has(rt.name)) renderView(rt);
   renderPane(currentTask());
   paintSidebar(rt);
 });
@@ -181,8 +192,12 @@ async function boot() {
   try {
     await loadSnapshot();
   } catch (e) {
-    view.innerHTML = `<div class="error-box">Couldn't reach OpenProject: ${esc(e.message)}</div>`;
-    paintSync("err", "Offline");
+    // Without a working key there's no data, but the account page still works.
+    const rt = route();
+    if (rt.name === "account" || rt.name === "admin") renderView(rt);
+    else if (e.code) view.innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
+    else view.innerHTML = `<div class="error-box">Couldn't reach OpenProject: ${esc(e.message)}</div>`;
+    paintSync("err", e.code ? "Not connected" : "Offline");
     return;
   }
   paintSync("ok");
@@ -194,7 +209,7 @@ async function boot() {
     try { await loadSnapshot(); } catch (_) { return; }
     if (S.fetchedAt > before) {
       const rt = route();
-      if (rt.name === "all") patchAll({ type: "reload" }); else if (rt.name !== "log") renderView(rt);
+      if (rt.name === "all") patchAll({ type: "reload" }); else if (!OWN_DATA.has(rt.name)) renderView(rt);
       renderPane(currentTask()); paintSidebar(rt); paintSync("ok");
     }
   }, 15000);
