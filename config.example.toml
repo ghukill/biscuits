@@ -1,12 +1,16 @@
 # biscuits configuration. Default location: ~/.biscuits/config.toml
-# Create it with `biscuits config init`. It holds an API key: keep it mode 600.
+# Create it with `biscuits config init`. It holds secrets: keep it mode 600.
 #
 # Changes are picked up on the next request, without a restart. The exception
-# is [server] and [storage], which need `biscuits restart`.
+# is [server], [storage] and [auth], which need `biscuits restart`.
 
 [openproject]
 url = "https://openproject.example.org"
-api_key = "your-openproject-api-key"
+# Used only for managing accounts and looking up names, never to read or change
+# tasks. Ideally a dedicated OpenProject admin account, not a person's key.
+admin_token = "an-openproject-admin-api-key"
+# The Docker container OpenProject runs in, for the key command on the admin screen.
+container = "openproject"
 
 [writes]
 # "preview": nothing is sent to OpenProject; edits apply in the browser only.
@@ -16,14 +20,24 @@ mode = "preview"
 projects = []
 
 [server]
-# biscuits has no login yet: anyone who can reach this address acts with the
-# API key above. Think before binding to anything but localhost.
 host = "127.0.0.1"
 port = 9173
 # URL prefix, if a reverse proxy serves biscuits under a sub-path, e.g. "/biscuits".
 base_path = "/"
+# Behind a reverse proxy, the proxy's address. Only then is X-Forwarded-Proto
+# believed, which is how biscuits knows the connection is HTTPS. Without it,
+# session cookies aren't marked Secure and the "isn't HTTPS" note stays up.
+# trusted_proxy = "127.0.0.1"
+
+[auth]
+# `biscuits config init` and `biscuits config add-auth-keys` generate these.
+# Signs login sessions. Changing it signs everyone out.
+secret_key = "at-least-32-random-characters"
+# Encrypts users' OpenProject API keys in the database. If this is lost, every
+# key has to be entered again. Back it up separately from the database.
+encryption_key = "a-fernet-key"
 
 [storage]
-# Where the snapshot cache, write log, pid file and server log live.
+# Where the database, snapshot caches, write log, pid file and server log live.
 # Defaults to the directory holding this file.
 # data_dir = "~/.biscuits"

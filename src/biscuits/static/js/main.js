@@ -33,9 +33,21 @@ function renderView(rt) {
   }
 }
 
+// Set when the first load failed, e.g. an account with no OpenProject key yet.
+let bootError = null;
+
+function renderWithoutData(rt) {
+  // The account and admin screens don't need task data, and an admin with no key
+  // yet has to be able to reach the screen that gives them one.
+  view.dataset.key = "";
+  if (rt.name === "account" || rt.name === "admin") renderView(rt);
+  else if (bootError) view.innerHTML = `<div class="error-box">${esc(bootError)}</div>`;
+  document.title = titleFor(rt) + " · biscuits";
+}
+
 function render({ paneOnly } = {}) {
-  if (!S.snap) return;
   const rt = route();
+  if (!S.snap) { if (bootError) renderWithoutData(rt); return; }
   const key = routeKey(rt);
   if (key !== lastKey) {
     S.justDone.clear();
@@ -192,11 +204,8 @@ async function boot() {
   try {
     await loadSnapshot();
   } catch (e) {
-    // Without a working key there's no data, but the account page still works.
-    const rt = route();
-    if (rt.name === "account" || rt.name === "admin") renderView(rt);
-    else if (e.code) view.innerHTML = `<div class="error-box">${esc(e.message)}</div>`;
-    else view.innerHTML = `<div class="error-box">Couldn't reach OpenProject: ${esc(e.message)}</div>`;
+    bootError = e.code ? e.message : `Couldn't reach OpenProject: ${e.message}`;
+    renderWithoutData(route());
     paintSync("err", e.code ? "Not connected" : "Offline");
     return;
   }

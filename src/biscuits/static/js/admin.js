@@ -7,8 +7,8 @@ import { toast } from "./ui.js";
 
 const BASE = document.body.dataset.base;
 
-function head(title, sub, icon = ICON.person) {
-  return `<div class="vhead"><div class="vtitle"><span class="ptile-ic big">${icon}</span><div><h1>${esc(title)}</h1><div class="muted">${esc(sub)}</div></div></div></div>`;
+function head(title, sub, tools = "") {
+  return `<div class="vhead"><div class="vtitle"><span class="ptile-ic big">${ICON.person}</span><div><h1>${esc(title)}</h1><div class="muted">${esc(sub)}</div></div></div><div class="vtools">${tools}</div></div>`;
 }
 
 // A key, masked until asked for.
@@ -126,8 +126,9 @@ const createForm = () => `<form class="card admin-card admin-form" id="new-user"
 
 export async function viewAdmin(el) {
   el.dataset.key = "admin";
-  el.innerHTML = head("Accounts", "Who can sign in to biscuits, and the OpenProject user each one acts as") +
-    `<div class="vtools admin-tools"><button class="btn sm primary" type="button" id="add-user">${ICON.plus} New account</button></div><div class="vbody" id="admin"></div>`;
+  el.innerHTML = head("Accounts", "Who can sign in to biscuits, and the OpenProject user each one acts as",
+    `<button class="btn sm primary" type="button" id="add-user">${ICON.plus} New account</button>`) +
+    `<div class="vbody" id="admin"></div>`;
   const box = $("#admin", el);
   let users = [];
   const paint = () => {

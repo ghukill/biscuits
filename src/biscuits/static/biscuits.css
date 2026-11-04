@@ -508,7 +508,6 @@ body.auth-page { display: flex; flex-direction: column; align-items: center; jus
 .auth-https { margin-top: 1rem; background: transparent; }
 
 /* Accounts */
-.admin-tools { padding: 0 0 .7rem; justify-content: flex-end; }
 .admin-card { margin-bottom: .8rem; padding: .9rem 1.2rem; }
 .admin-card h2 { margin: 0; font-size: 1.05rem; }
 .admin-card.is-disabled { opacity: .65; }
@@ -523,4 +522,5 @@ body.auth-page { display: flex; flex-direction: column; align-items: center; jus
 .admin-new-op { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
 .key-val, .admin-secret code { font-size: .85rem; overflow-wrap: anywhere; }
 .cmd { margin: 0; padding: .5rem .7rem; background: var(--bg-2); border-radius: 8px; font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
-.admin-secret { margin-bottom: .8rem; }
+.admin-secret { display: block; margin-bottom: .8rem; line-height: 1.6; }
+#notice .p-banner { margin-bottom: .8rem; }
