@@ -1,0 +1,29 @@
+# biscuits configuration. Default location: ~/.biscuits/config.toml
+# Create it with `biscuits config init`. It holds an API key: keep it mode 600.
+#
+# Changes are picked up on the next request, without a restart. The exception
+# is [server] and [storage], which need `biscuits restart`.
+
+[openproject]
+url = "https://openproject.example.org"
+api_key = "your-openproject-api-key"
+
+[writes]
+# "preview": nothing is sent to OpenProject; edits apply in the browser only.
+# "live":    edits are sent for the projects listed below.
+mode = "preview"
+# OpenProject project ids that may be written in live mode, or "*" for all.
+projects = []
+
+[server]
+# biscuits has no login yet: anyone who can reach this address acts with the
+# API key above. Think before binding to anything but localhost.
+host = "127.0.0.1"
+port = 9173
+# URL prefix, if a reverse proxy serves biscuits under a sub-path, e.g. "/biscuits".
+base_path = "/"
+
+[storage]
+# Where the snapshot cache, write log, pid file and server log live.
+# Defaults to the directory holding this file.
+# data_dir = "~/.biscuits"
