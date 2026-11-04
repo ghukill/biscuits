@@ -190,6 +190,13 @@ def update(wp_id, changes):
             raise WriteError(f"Field '{k}' can't be edited from biscuits yet")
     if body.get("startDate") and body.get("dueDate") and body["startDate"] > body["dueDate"]:
         raise WriteError("Start date is after the due date")
+    if "startDate" in body or "dueDate" in body:
+        # Tasks keep exactly the dates they're given, as in Asana. Otherwise OP
+        # silently ignores date edits on a parent whose dates roll up from its
+        # subtasks, and moves dates that fall on a non-working day.
+        body["ignoreNonWorkingDays"] = True
+        if not cur.get("scheduleManually"):
+            body["scheduleManually"] = True
     if links:
         body["_links"] = links
     if len(body) == 1:
@@ -230,6 +237,7 @@ def create(fields):
     due = _date(fields.get("due"), "Due date")
     if due:
         body["dueDate"] = due
+        body["ignoreNonWorkingDays"] = True  # keep the date as given, see update()
     if fields.get("description"):
         body["description"] = {"raw": str(fields["description"])[:MAX_TEXT]}
     return _execute("create", "POST", "/work_packages", body, {project_id},

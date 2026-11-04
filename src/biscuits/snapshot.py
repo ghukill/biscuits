@@ -69,6 +69,9 @@ def make_row(e, status_meta, prio_meta):
     sm = status_meta.get(sid, {})
     subject = e.get("subject") or ""
     sec = section_name(subject) if (not parent_id and tname == "Summary task") else None
+    # OP keeps computing derived dates from subtasks even for a manually
+    # scheduled parent. There, a blank own date means blank: it has to stay blank.
+    rollup = not e.get("scheduleManually")
     return {
         "id": e["id"],
         "subject": subject,
@@ -82,8 +85,8 @@ def make_row(e, status_meta, prio_meta):
         "priority_pos": prio_meta.get(prid, {}).get("position"),
         "assignee_id": aid, "assignee": aname,
         "responsible_id": rid, "responsible": rname,
-        "start": e.get("startDate") or e.get("derivedStartDate"),
-        "due": e.get("dueDate") or e.get("derivedDueDate"),
+        "start": e.get("startDate") or (e.get("derivedStartDate") if rollup else None),
+        "due": e.get("dueDate") or (e.get("derivedDueDate") if rollup else None),
         "own_start": e.get("startDate"), "own_due": e.get("dueDate"),
         "pct": e.get("percentageDone"),
         "updated": (e.get("updatedAt") or "")[:10],

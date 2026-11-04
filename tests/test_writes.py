@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from biscuits import config, writes
+from biscuits import config, snapshot, writes
 
 
 def test_preview_sends_nothing_but_is_logged(write_config, op):
@@ -70,3 +70,35 @@ def test_bad_edits_are_refused(write_config, op, changes):
     with pytest.raises(writes.WriteError):
         writes.update(1, changes)
     assert op.writes == []
+
+
+def test_date_edits_take_a_rolled_up_parent_out_of_automatic_scheduling(write_config, op):
+    write_config("live", '"*"')
+    writes.update(1, {"due": None, "start": None})  # stub WPs aren't scheduleManually
+    body = op.writes[0][2]
+    assert body["dueDate"] is None and body["startDate"] is None
+    assert body["scheduleManually"] is True
+
+
+def test_date_edits_keep_weekend_dates(write_config, op):
+    write_config("live", '"*"')
+    writes.update(1, {"due": "2026-11-21"})
+    assert op.writes[0][2]["ignoreNonWorkingDays"] is True
+    writes.create({"subject": "x", "project_id": 1, "due": "2026-11-21"})
+    assert op.writes[1][2]["ignoreNonWorkingDays"] is True
+
+
+def test_other_edits_leave_scheduling_alone(write_config, op):
+    write_config("live", '"*"')
+    writes.update(1, {"subject": "x"})
+    assert "scheduleManually" not in op.writes[0][2]
+    assert "ignoreNonWorkingDays" not in op.writes[0][2]
+
+
+@pytest.mark.parametrize("manual,expected", [(True, None), (False, "2026-12-15")])
+def test_derived_dates_only_show_for_rolled_up_tasks(manual, expected):
+    e = {"id": 1, "subject": "Parent", "scheduleManually": manual, "_links": {},
+         "dueDate": None, "derivedDueDate": "2026-12-15",
+         "startDate": None, "derivedStartDate": "2026-12-15"}
+    row = snapshot.make_row(e, {}, {})
+    assert row["due"] == expected and row["start"] == expected
