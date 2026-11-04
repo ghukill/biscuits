@@ -475,3 +475,11 @@ table.log summary { cursor: pointer; color: var(--muted); font-size: .76rem; }
 .pane:empty { border: 0; box-shadow: none; }
 .tl-more { padding: .45rem .7rem .45rem 2.65rem; color: var(--accent); font-size: .84rem; font-weight: 600; cursor: pointer; border-bottom: 1px solid var(--line); background: var(--panel); }
 .tl-more:hover { background: var(--bg); }
+
+/* Archived projects */
+.arch-card { margin-bottom: 1rem; padding-bottom: .4rem; }
+.arch-list { margin: .4rem 0 0; padding: 0 1.2rem .6rem; list-style: none; columns: 2 16rem; color: var(--muted); font-size: .88rem; }
+.arch-list li { padding: .12rem 0; break-inside: avoid; }
+.view > .p-banner { margin: 0 0 .8rem; }
+.p-banner svg { width: 15px; height: 15px; vertical-align: -3px; }
+.arch-none { padding: 1rem 1.2rem; }

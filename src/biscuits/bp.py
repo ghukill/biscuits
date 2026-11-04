@@ -11,6 +11,7 @@ router picks the view:
   /people/<id>      Someone else's tasks
   /search?q=        Search results
   /log              Write log (what biscuits sent / would have sent)
+  /archived         Archived projects
 Any of them accept ?task=<id> to open the task detail pane.
 
 JSON API:
@@ -22,13 +23,14 @@ JSON API:
   POST /api/wp               Create a task/subtask  } projects, else preview
   GET  /api/assignees/<pid>  Who can be assigned in a project
   GET  /api/writes           Recent write-log entries
+  POST /api/project/<id>/archive   Archive or unarchive (biscuits only, not sent to OP)
 """
 
 import time
 
 from flask import Blueprint, Response, abort, jsonify, render_template, request
 
-from . import client, snapshot, writes
+from . import archive, client, snapshot, writes
 
 bp = Blueprint(
     "biscuits",
@@ -50,7 +52,7 @@ def index():
     return _shell()
 
 
-@bp.get("/<any(home, my, all, search, log):view>")
+@bp.get("/<any(home, my, all, search, log, archived):view>")
 @bp.get("/project/<int:pid>")
 @bp.get("/people/<int:uid>")
 def views(**_):
@@ -78,6 +80,7 @@ def api_snapshot():
         age_seconds=round(time.time() - fetched_at),
         stale_error=error,
         writes=_gate_info(),
+        archived_projects=archive.ids(),
     )
 
 
@@ -163,6 +166,16 @@ def api_comment(wp_id):
 @bp.post("/api/wp")
 def api_create():
     return _write(writes.create, request.get_json(silent=True) or {})
+
+
+@bp.post("/api/project/<int:pid>/archive")
+def api_archive(pid):
+    _guard()
+    archived = (request.get_json(silent=True) or {}).get("archived")
+    if not isinstance(archived, bool):
+        return jsonify(ok=False, error="archived must be true or false"), 400
+    archive.set_archived(pid, archived)
+    return jsonify(ok=True, archived_projects=archive.ids())
 
 
 @bp.get("/api/assignees/<int:pid>")

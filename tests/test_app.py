@@ -12,7 +12,7 @@ def web(write_config):
 
 
 def test_shell_routes_and_static_assets(web):
-    for path in ["/", "/home", "/my", "/all", "/search", "/log", "/project/3", "/people/3"]:
+    for path in ["/", "/home", "/my", "/all", "/search", "/log", "/archived", "/project/3", "/people/3"]:
         assert web.get(path).status_code == 200, path
     html = web.get("/").text
     assert 'data-base=""' in html
@@ -65,3 +65,19 @@ def test_config_broken_after_startup_is_a_json_error(write_config):
     path.write_text("broken = [")
     r = web.post("/api/wp/1", json={"changes": {"subject": "x"}}, headers=H)
     assert r.status_code == 500 and "TOML" in r.json["error"]
+
+
+def test_archiving_is_a_biscuits_flag_and_never_reaches_openproject(write_config, op):
+    write_config("live", '"*"')
+    web = create_app().test_client()
+    assert web.get("/api/snapshot").json["archived_projects"] == []
+    assert web.post("/api/project/1/archive", json={"archived": True}, headers=H).json["archived_projects"] == [1]
+    assert web.post("/api/project/1/archive", json={"archived": True}, headers=H).json["archived_projects"] == [1]
+    assert web.get("/api/snapshot").json["archived_projects"] == [1]
+    assert web.post("/api/project/1/archive", json={"archived": False}, headers=H).json["archived_projects"] == []
+    assert op.writes == []
+
+
+def test_archiving_needs_the_csrf_header_and_a_real_boolean(web):
+    assert web.post("/api/project/1/archive", json={"archived": True}).status_code == 403
+    assert web.post("/api/project/1/archive", json={"archived": "yes"}, headers=H).status_code == 400

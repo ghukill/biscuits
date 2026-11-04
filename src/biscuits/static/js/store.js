@@ -17,6 +17,7 @@ export const S = {
   priorities: [],
   users: new Map(),      // id -> {id, name}
   projects: new Map(),
+  archived: new Set(),   // project ids archived in biscuits
   me: null, meId: null,
   writes: { mode: "preview", write_projects: [], all_projects: false },
   justDone: new Set(),   // completed this session: keep visible until view change
@@ -40,6 +41,7 @@ export function adopt(body) {
   S.snap = body.data;
   S.fetchedAt = body.fetched_at;
   if (body.writes) S.writes = body.writes;
+  S.archived = new Set(body.archived_projects || []);
   S.me = S.snap.me; S.meId = S.snap.me_id;
   S.statuses = new Map(S.snap.statuses.map((s) => [s.id, s]));
   S.priorities = [...S.snap.priorities].sort((a, b) => a.position - b.position);
@@ -77,6 +79,8 @@ export async function refresh() { adopt(await api("/api/refresh", { method: "POS
 export const row = (id) => S.rows.get(+id);
 export const children = (id) => (S.kids.get(+id) || []).map((k) => S.rows.get(k));
 export const allRows = () => [...S.rows.values()];
+// Everyday views leave out tasks in archived projects. Search and the project itself still find them.
+export const workingRows = () => allRows().filter((r) => !S.archived.has(r.project_id));
 export function ancestors(r) {
   const out = [];
   let p = r && S.rows.get(r.parent_id);
@@ -87,7 +91,10 @@ export const isSection = (r) => !!(r && r.section != null && !r.parent_id);
 export const sectionTitle = (r) => (r.section && r.section !== "Untitled section" ? r.section : "Untitled section");
 export const liveProject = (pid) => S.writes.mode === "live" && (S.writes.all_projects || S.writes.write_projects.includes(pid));
 export const projectName = (pid) => (S.projects.get(pid) || {}).name || "";
-export const activeProjects = () => [...S.projects.values()].filter((p) => p.active).sort((a, b) => a.name.localeCompare(b.name));
+const byName = (a, b) => a.name.localeCompare(b.name);
+export const activeProjects = () => [...S.projects.values()].filter((p) => p.active && !S.archived.has(p.id)).sort(byName);
+export const archivedProjects = () => [...S.projects.values()].filter((p) => p.active && S.archived.has(p.id)).sort(byName);
+export const archivedInOP = () => [...S.projects.values()].filter((p) => !p.active).sort(byName);
 export const openKids = (id) => children(id).filter((c) => !c.done).length;
 
 // ---------- local application of a change ----------
@@ -220,6 +227,18 @@ export async function comment(id, text) {
   const res = await api(`/api/wp/${r.id}/comment`, { method: "POST", body: JSON.stringify({ text }) });
   if (!res.sent) previewNotice(r, res.reason);
   return res;
+}
+
+export async function setArchived(pid, archived) {
+  const name = projectName(pid);
+  try {
+    const res = await api(`/api/project/${pid}/archive`, { method: "POST", body: JSON.stringify({ archived }) });
+    S.archived = new Set(res.archived_projects);
+    emit({ type: "reload" });
+    toast(archived ? `“${name}” archived` : `“${name}” is back in your projects`, archived ? { action: "Undo", onAction: () => setArchived(pid, false) } : {});
+  } catch (e) {
+    toast(`Couldn't ${archived ? "archive" : "unarchive"} “${name}”: ${e.message}`, { kind: "error", ms: 8000 });
+  }
 }
 
 export const detail = (id) => api(`/api/wp/${id}`);

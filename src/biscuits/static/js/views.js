@@ -2,7 +2,7 @@
 // Each view renders into #view and is re-run whenever the store changes.
 
 import { $, $$, esc, h, avatar, friendlyDate, longDate, dueClass, hue, ago, T, RANGES, inRange, ICON } from "./util.js";
-import { S, row, children, allRows, isSection, sectionTitle, liveProject, activeProjects, projectName, toggleComplete, update, create, writeLog } from "./store.js";
+import { S, row, children, allRows, workingRows, isSection, sectionTitle, liveProject, activeProjects, archivedProjects, archivedInOP, projectName, toggleComplete, update, create, writeLog, setArchived } from "./store.js";
 import { renderList, pickFor } from "./list.js";
 import { menu, toast } from "./ui.js";
 import { href, go, openTask, currentTask, setParam } from "./nav.js";
@@ -79,8 +79,8 @@ export function viewHome(el) {
   $$("#scope button", el).forEach((b) => b.classList.toggle("on", b.dataset.s === scope));
 
   const vis = visibleFn("incomplete");
-  const pool = allRows().filter(tasksOnly).filter(vis).filter((r) => scope === "all" || r.assignee_id === S.meId);
-  const mineOpen = allRows().filter((r) => tasksOnly(r) && !r.done && r.assignee_id === S.meId);
+  const pool = workingRows().filter(tasksOnly).filter(vis).filter((r) => scope === "all" || r.assignee_id === S.meId);
+  const mineOpen = workingRows().filter((r) => tasksOnly(r) && !r.done && r.assignee_id === S.meId);
   const stat = (n, l, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${l}</span></div>`;
   $("#home-stats", el).innerHTML =
     stat(mineOpen.length, "open tasks assigned to you") +
@@ -97,7 +97,7 @@ export function viewHome(el) {
   });
 
   const open = new Map(), over = new Map();
-  for (const r of allRows()) if (tasksOnly(r) && !r.done) {
+  for (const r of workingRows()) if (tasksOnly(r) && !r.done) {
     open.set(r.project_id, (open.get(r.project_id) || 0) + 1);
     if (r.due && r.due < T) over.set(r.project_id, (over.get(r.project_id) || 0) + 1);
   }
@@ -131,7 +131,7 @@ export function viewPeople(el, uid, { mine = false } = {}) {
   if (fresh) wireComp(el, () => { el.dataset.key = ""; viewPeople(el, uid, { mine }); });
   const mode = compOf(scope);
   const vis = visibleFn(mode);
-  const mineRows = allRows().filter((r) => tasksOnly(r) && r.assignee_id === uid);
+  const mineRows = workingRows().filter((r) => tasksOnly(r) && r.assignee_id === uid);
   const shown = mineRows.filter(vis);
   $("#vsub", el).textContent = `${mineRows.filter((r) => !r.done).length} open · ${mineRows.filter((r) => r.done).length} completed`;
   const groups = mode === "completed"
@@ -163,15 +163,22 @@ export function viewProject(el, pid, q) {
   if (!p) { el.dataset.key = ""; el.innerHTML = `<div class="tl-empty">That project isn't available. Archived projects can't be read through the API.</div>`; return; }
   const board = q.get("view") === "board";
   const live = liveProject(pid);
-  const fresh = frame(el, `project:${pid}:${board ? "b" : "l"}`, `
+  const archived = S.archived.has(pid);
+  const fresh = frame(el, `project:${pid}:${board ? "b" : "l"}:${archived ? "a" : ""}`, `
+    ${!p.active ? `<div class="p-banner warn">This project is archived in OpenProject, so biscuits can't read its tasks. To get it back, unarchive it in OpenProject.</div>` : ""}
+    ${archived ? `<div class="p-banner warn">${ICON.archive} This project is archived. It's hidden from Home, My tasks, All tasks and the sidebar, but search still finds it and you can still edit it.</div>` : ""}
     <div class="vhead">
       <div class="vtitle"><span class="ptile-ic big" style="--h:${hue(p.name)}">${ICON.list}</span><div>
         <h1>${esc(p.name)} <span class="p-mode ${live ? "live" : "preview"}" title="${live ? "Edits here are saved to OpenProject" : "Edits here are a preview only (not saved)"}">${live ? "Live" : "Preview"}</span></h1>
         <div class="tabs"><a href="${href(`/project/${pid}`)}" data-nav class="${board ? "" : "on"}">${ICON.list} List</a><a href="${href(`/project/${pid}`, { view: "board" })}" data-nav class="${board ? "on" : ""}">${ICON.board} Board</a></div></div></div>
-      <div class="vtools">${compButton("project")}<a class="btn sm" href="${esc(S.snap.op_url)}/projects/${esc(p.identifier)}/work_packages" target="_blank" rel="noopener">${ICON.ext} OpenProject</a></div>
+      <div class="vtools">${compButton("project")}${p.active ? `<button class="btn sm" id="archive-btn" type="button">${ICON.archive} ${archived ? "Unarchive" : "Archive"}</button>` : ""}<a class="btn sm" href="${esc(S.snap.op_url)}/projects/${esc(p.identifier)}/work_packages" target="_blank" rel="noopener">${ICON.ext} OpenProject</a></div>
     </div>
     <div class="vbody ${board ? "board-wrap" : ""}" id="list"></div>`);
-  if (fresh) wireComp(el, () => { el.dataset.key = ""; viewProject(el, pid, q); });
+  if (fresh) {
+    wireComp(el, () => { el.dataset.key = ""; viewProject(el, pid, q); });
+    const ab = $("#archive-btn", el);
+    if (ab) ab.addEventListener("click", () => setArchived(pid, !archived));
+  }
   const vis = visibleFn(compOf("project"));
   const groups = projectGroups(pid, vis);
   if (board) return renderBoard($("#list", el), groups, vis);
@@ -281,7 +288,7 @@ export function viewSearch(el, q) {
   const parts = [];
   if (res.projects.length || res.people.length) {
     parts.push(`<div class="sgrid">`);
-    for (const p of res.projects) parts.push(`<a class="sitem" href="${href(`/project/${p.id}`)}" data-nav><span class="stype">Project</span><span class="ptile-ic" style="--h:${hue(p.name)}">${ICON.list}</span><b>${esc(p.name)}</b>${p.active ? "" : `<span class="muted">archived</span>`}</a>`);
+    for (const p of res.projects) parts.push(`<a class="sitem" href="${href(`/project/${p.id}`)}" data-nav><span class="stype">Project</span><span class="ptile-ic" style="--h:${hue(p.name)}">${ICON.list}</span><b>${esc(p.name)}</b>${p.active && !S.archived.has(p.id) ? "" : `<span class="muted">archived</span>`}</a>`);
     for (const u of res.people) parts.push(`<a class="sitem" href="${href(`/people/${u.id}`)}" data-nav><span class="stype">Person</span>${avatar(u.name, "sm")}<b>${esc(u.name)}</b></a>`);
     parts.push(`</div>`);
   }
@@ -294,6 +301,21 @@ export function viewSearch(el, q) {
     cols: ["assignee", "due", "project", "status"],
     empty: query ? "No tasks match." : "",
   });
+}
+
+// ============ Archived projects ============
+export function viewArchived(el) {
+  frame(el, "archived", `<div class="vhead"><div class="vtitle"><span class="ptile-ic big">${ICON.archive}</span><div><h1>Archived projects</h1><div class="muted">Finished projects, out of your everyday views. Nothing is deleted.</div></div></div></div><div class="vbody" id="arch"></div>`);
+  const mine = archivedProjects(), inOP = archivedInOP();
+  const openCount = (pid) => allRows().filter((r) => r.project_id === pid && tasksOnly(r) && !r.done).length;
+  $("#arch", el).innerHTML = `
+    <div class="card arch-card"><div class="ptiles">${mine.map((p) => `
+      <a class="ptile" href="${href(`/project/${p.id}`)}" data-nav style="--h:${hue(p.name)}">
+        <span class="ptile-ic">${ICON.list}</span><span class="ptile-name">${esc(p.name)}</span><span class="ptile-meta">${openCount(p.id)} open</span>
+      </a>`).join("") || `<div class="muted arch-none">Nothing here yet. Use the Archive button on a project's page.</div>`}</div></div>
+    ${inOP.length ? `<div class="card arch-card"><div class="card-head"><h2>Archived in OpenProject</h2></div>
+      <p class="card-note">Archived inside OpenProject itself, which hides their tasks from biscuits. To get one back, unarchive it in OpenProject.</p>
+      <ul class="arch-list">${inOP.map((p) => `<li>${esc(p.name)}</li>`).join("")}</ul></div>` : ""}`;
 }
 
 // ============ Write log ============

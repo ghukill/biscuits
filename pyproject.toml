@@ -5,8 +5,10 @@ description = "Biscuits: an Asana-flavoured web UI for OpenProject"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "alembic>=1.13",
     "click>=8.1",
     "flask>=3.0",
+    "sqlalchemy>=2.0",
     "waitress>=3.0",
 ]
 

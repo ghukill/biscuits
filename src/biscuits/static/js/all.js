@@ -3,7 +3,7 @@
 // header filters that keep a row if any descendant matches.
 
 import { $, esc, avatar, friendlyDate, dueClass, hue, T, RANGES, inRange, ICON } from "./util.js";
-import { S, allRows, row, toggleComplete } from "./store.js";
+import { S, workingRows, row, toggleComplete } from "./store.js";
 import { openTask, currentTask } from "./nav.js";
 import { pickFor } from "./list.js";
 
@@ -33,7 +33,7 @@ let host = null;
 
 const copyRow = (r) => { const { _children, ...rest } = r; return { ...rest }; };
 function buildTree() {
-  const byId = new Map(allRows().map((r) => [r.id, copyRow(r)]));
+  const byId = new Map(workingRows().map((r) => [r.id, copyRow(r)]));
   const roots = [];
   for (const r of byId.values()) {
     const p = r.parent_id && byId.get(r.parent_id);
@@ -41,7 +41,7 @@ function buildTree() {
   }
   return roots;
 }
-const distinct = (field, blank) => [...new Set(allRows().map((r) => r[field] ?? blank))].filter((v) => v != null).sort((a, b) => String(a).localeCompare(String(b)));
+const distinct = (field, blank) => [...new Set(workingRows().map((r) => r[field] ?? blank))].filter((v) => v != null).sort((a, b) => String(a).localeCompare(String(b)));
 
 const fmt = {
   check: (c) => { const r = c.getRow().getData(); return r.section != null ? "" : `<button class="check ${r.done ? "on" : ""}" type="button">${ICON.check}</button>`; },
@@ -169,7 +169,7 @@ export function viewAll(el) {
 
 function count() {
   if (!table) return;
-  const n = allRows().length;
+  const n = workingRows().length;
   $("#all-count").textContent = `${n} work packages · ${table.getDataCount("active")} top-level rows shown`;
 }
 

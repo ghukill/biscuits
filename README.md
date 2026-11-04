@@ -63,6 +63,7 @@ By default, everything biscuits keeps lives next to the config file:
 | `config.toml` | Settings, including the API key |
 | `snapshot.json` | Cached OpenProject data, so restarts show data immediately |
 | `write-log.jsonl` | Audit log of every edit, sent or not |
+| `biscuits.db` | biscuits' own data, such as archived projects (SQLite, migrated automatically) |
 | `biscuits.log`, `biscuits.pid` | Background server log and lock |
 
 ## Writes
@@ -141,4 +142,6 @@ uv run biscuits --config ./dev/config.toml serve
 | `client.py` | **GET-only** OpenProject client |
 | `writes.py` | **The only code that sends non-GET requests**, behind the write gate |
 | `snapshot.py` | Snapshot cache, with Asana-section detection |
+| `db.py`, `migrations/` | biscuits' own SQLite database and its Alembic migrations |
+| `archive.py` | Archived projects (a biscuits flag; OpenProject isn't touched) |
 | `static/`, `templates/` | The single-page UI |

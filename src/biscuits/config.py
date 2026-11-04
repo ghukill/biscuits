@@ -39,6 +39,10 @@ class Config:
     data_dir: Path
 
     @property
+    def db_file(self) -> Path:
+        return self.data_dir / "biscuits.db"
+
+    @property
     def snapshot_file(self) -> Path:
         return self.data_dir / "snapshot.json"
 

@@ -1,10 +1,10 @@
 // biscuits shell: boot, routing, sidebar, typeahead search, keyboard.
 
 import { $, $$, esc, avatar, hue, isTyping, friendlyDate, ICON, debounce } from "./util.js";
-import { S, loadSnapshot, refresh, onChange, activeProjects, liveProject, row, toggleComplete } from "./store.js";
+import { S, loadSnapshot, refresh, onChange, activeProjects, archivedProjects, archivedInOP, workingRows, liveProject, row, toggleComplete } from "./store.js";
 import { setHandler, route, currentTask, openTask, closeTask, go, href } from "./nav.js";
 import { renderPane, wirePane, hooks, paneOpen, followId } from "./pane.js";
-import { viewHome, viewPeople, viewProject, viewSearch, viewLog, searchIndex } from "./views.js";
+import { viewHome, viewPeople, viewProject, viewSearch, viewLog, viewArchived, searchIndex } from "./views.js";
 import { viewAll, patchAll, reselectAll, unmountAll } from "./all.js";
 import { popoverOpen, closePopover, toast } from "./ui.js";
 
@@ -22,6 +22,7 @@ function renderView(rt) {
     case "all": return viewAll(view);
     case "search": return viewSearch(view, rt.q);
     case "log": return viewLog(view);
+    case "archived": return viewArchived(view);
     default: return viewHome(view);
   }
 }
@@ -50,14 +51,15 @@ function render({ paneOnly } = {}) {
 function titleFor(rt) {
   if (rt.name === "project") return (S.projects.get(rt.id) || {}).name || "Project";
   if (rt.name === "people") return (S.users.get(rt.id) || {}).name || "People";
-  return { my: "My tasks", all: "All tasks", search: "Search", log: "Write log" }[rt.name] || "Home";
+  return { my: "My tasks", all: "All tasks", search: "Search", log: "Write log", archived: "Archived projects" }[rt.name] || "Home";
 }
 
 // ---------- sidebar ----------
 function paintSidebar(rt) {
   const open = new Map();
-  for (const r of S.rows.values()) if (!r.done && r.section == null) open.set(r.project_id, (open.get(r.project_id) || 0) + 1);
-  const mine = [...S.rows.values()].filter((r) => !r.done && r.section == null && r.assignee_id === S.meId).length;
+  const working = workingRows();
+  for (const r of working) if (!r.done && r.section == null) open.set(r.project_id, (open.get(r.project_id) || 0) + 1);
+  const mine = working.filter((r) => !r.done && r.section == null && r.assignee_id === S.meId).length;
   const link = (path, ic, label, active, extra = "") =>
     `<a href="${href(path)}" data-nav class="${active ? "active" : ""}">${ic}<span>${label}</span>${extra}</a>`;
   $("#side-main").innerHTML =
@@ -68,7 +70,9 @@ function paintSidebar(rt) {
   $("#side-projects").innerHTML = projects.map((p) =>
     `<a href="${href(`/project/${p.id}`)}" data-nav class="${rt.name === "project" && rt.id === p.id ? "active" : ""}" title="${esc(p.name)}">
       <span class="pdot" style="--h:${hue(p.name)}"></span><span class="nm">${esc(p.name)}</span>${liveProject(p.id) && !S.writes.all_projects ? `<span class="live-tag">live</span>` : ""}<span class="n">${open.get(p.id) || ""}</span></a>`).join("");
-  $("#side-foot").innerHTML = link("/log", ICON.log, "Write log", rt.name === "log") +
+  const nArchived = archivedProjects().length + archivedInOP().length;
+  $("#side-foot").innerHTML = (nArchived ? link("/archived", ICON.archive, "Archived projects", rt.name === "archived") : "") +
+    link("/log", ICON.log, "Write log", rt.name === "log") +
     `<div class="mode-note ${S.writes.mode}">${S.writes.mode === "live"
       ? S.writes.all_projects ? "Changes are saved to OpenProject."
       : `Saving to OpenProject is on for <b>${S.writes.write_projects.map((id) => esc((S.projects.get(id) || {}).name || "#" + id)).join(", ")}</b>. Changes anywhere else are previews.`
