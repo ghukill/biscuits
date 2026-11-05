@@ -131,11 +131,66 @@ asks which to work on. You approve its work as it goes, and nothing runs unatten
 To set it up, create a non-admin OpenProject user, make it a member of the project,
 and add an `[agent]` section to the config (see `config.example.toml`). biscuits
 refuses a token that belongs to an OpenProject admin. The session's key is also
-written to `agent-mcp.json` in the data directory, mode 600.
+written to `agent-mcp.json` in the data directory, mode 600. The session reaches
+OpenProject through `biscuits mcp`, below.
 
 The session runs as your own Unix user, so the agent's permissions are limited in
 OpenProject but not on this machine. It's told not to use other credentials, but
 nothing stops it from reading them, so check what you approve.
+
+## The OpenProject MCP server
+
+`biscuits mcp` runs an [MCP](https://modelcontextprotocol.io/) server over stdio, so
+AI tools can read and change OpenProject tasks. It has 12 tools: `list_projects`,
+`search_work_packages`, `get_work_package`, `get_comments`, `create_work_package`,
+`update_work_package`, `add_comment`, `count_work_packages`, `list_statuses`,
+`list_types`, `list_priorities` and `list_users`. None of them deletes anything.
+
+It's independent of the web app. It uses only the standard library and doesn't read
+the biscuits config, so it runs without a config file and while the web server is
+down. Credentials come from these environment variables:
+
+| Variable | What |
+|---|---|
+| `OPENPROJECT_URL`, `OPENPROJECT_API_KEY` | The server and key to use |
+| `OPENPROJECT_ENV_FILE` | A file of `KEY=value` lines, used for whichever of those two isn't set |
+
+```json
+"openproject": {
+  "command": "/home/you/.local/bin/biscuits",
+  "args": ["mcp"],
+  "env": {"OPENPROJECT_ENV_FILE": "/path/to/openproject.env"}
+}
+```
+
+Without credentials it still starts and lists its tools, and every tool call returns
+a "not configured" error.
+
+**Its writes bypass the `[writes]` gate and the write log,** because it doesn't read
+the config. OpenProject's own permissions for the key are the only limit, and its
+history shows that key's user as the author. Give it a key with no more access than
+it needs.
+
+### OpenProject API findings
+
+Checked against our instance in November 2026. These are why the server's requests
+look the way they do.
+
+- `offset` is a 1-based **page number**, not a row offset, so keep the page size the
+  same across requests.
+- With no `filters` parameter, `/work_packages` and `/projects/{id}/work_packages`
+  return **open** tasks only. Send `filters=[]` to get everything.
+- Boolean filter values are `"t"` and `"f"`, not `"true"` and `"false"`.
+- `sortBy` needs its JSON form, `sortBy=[["id","desc"]]`. The shorthand `id:desc` is
+  rejected.
+- `dueDate <>d ["2026-10-01","2026-10-31"]` works as a date range. `dueDate <t- ["0"]`
+  also returned tasks due today, so check it before using it to mean "overdue".
+- Archived projects answer 403 on their work package endpoints, even for an admin,
+  and their tasks don't appear in the global list.
+- Creating a task with `"description": null` answers 500: leave the key out.
+- PATCH needs the current `lockVersion`.
+- An assignee is written as `{"href": "/api/v3/users/{id}"}`.
+- `subjectOrId` with operator `**` searches subjects and ids together.
 
 ## Other admin commands
 
@@ -203,7 +258,9 @@ uv run biscuits --config ./dev/config.toml serve
 | `accounts.py` | Accounts: passwords, encrypted keys, rate limiting |
 | `client.py` | **GET-only** OpenProject client. Always needs a key; there's no default |
 | `opadmin.py` | **The only code that may use the admin token** |
-| `writes.py` | **The only code that sends non-GET requests**, behind the write gate |
+| `writes.py` | **The only web app code that sends non-GET requests**, behind the write gate |
+| `agent.py` | `biscuits agent`, the Claude Code session signed in as the agent account |
+| `mcp_server.py` | `biscuits mcp`. Standalone: standard library only, no config, and its own writes outside the gate |
 | `snapshot.py` | Per-account snapshot caches, with Asana-section detection |
 | `db.py`, `migrations/` | biscuits' own SQLite database and its Alembic migrations |
 | `archive.py` | Archived projects (a biscuits flag; OpenProject isn't touched) |
