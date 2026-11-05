@@ -146,7 +146,8 @@ export function viewPeople(el, uid, { mine = false } = {}) {
 // ============ Project ============
 function projectGroups(pid, vis) {
   const roots = allRows().filter((r) => r.project_id === pid && !(r.parent_id && row(r.parent_id)));
-  const sections = roots.filter(isSection).sort((a, b) => a.id - b.id);
+  // A closed section with nothing to show would just be an empty header.
+  const sections = roots.filter(isSection).filter((s) => !s.done || children(s.id).some(vis)).sort((a, b) => a.id - b.id);
   const loose = roots.filter((r) => !isSection(r) && vis(r)).sort((a, b) => a.id - b.id);
   const groups = [];
   if (loose.length || !sections.length) {
