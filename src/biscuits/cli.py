@@ -262,6 +262,19 @@ def agent_session():
     agent.launch()
 
 
+@main.command("mcp")
+def mcp_stdio():
+    """Run the OpenProject MCP server over stdio.
+
+    Needs no config file or running web server. Credentials come from
+    $OPENPROJECT_URL and $OPENPROJECT_API_KEY, then the file named by
+    $OPENPROJECT_ENV_FILE.
+    """
+    from . import mcp_server  # reads the credentials on import, so only load it here
+
+    mcp_server.main()
+
+
 # ---------- admin ----------
 
 @main.group("snapshot")

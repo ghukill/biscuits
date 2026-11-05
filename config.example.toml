@@ -48,8 +48,6 @@ encryption_key = "a-fernet-key"
 # token = "the-agent-accounts-openproject-api-key"
 # Tasks assigned to the agent in this project are offered in the session.
 # project = 56
-# The OpenProject MCP server the session uses.
-# mcp_server = "/path/to/openproject-mcp/server.py"
 # Where the session starts. Defaults to the current directory.
 # workdir = "/path/to/biscuits"
 # Planning docs kept outside the repo, if any. The session can read and edit them.

@@ -84,7 +84,7 @@ def write_mcp_config(cfg: config.Config) -> Path:
     with os.fdopen(fd, "w") as f:
         json.dump({"mcpServers": {"openproject": {
             "command": sys.executable,
-            "args": [str(cfg.agent.mcp_server)],
+            "args": ["-m", "biscuits", "mcp"],
             "env": {"OPENPROJECT_URL": cfg.op_url, "OPENPROJECT_API_KEY": cfg.agent.token},
         }}}, f)
     return path
@@ -95,8 +95,6 @@ def launch() -> None:
     cfg = config.load()
     if cfg.agent is None:
         raise config.ConfigError(f"{cfg.path} has no [agent] section. See config.example.toml.")
-    if not cfg.agent.mcp_server.is_file():
-        raise config.ConfigError(f"[agent] mcp_server not found: {cfg.agent.mcp_server}")
     claude = shutil.which("claude")
     if claude is None:
         raise config.ConfigError("Can't find the `claude` command on your PATH.")

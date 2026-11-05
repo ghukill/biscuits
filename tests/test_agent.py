@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import sys
 
 import pytest
 from click.testing import CliRunner
@@ -13,9 +14,7 @@ BOT = {"id": 16, "name": "Biscuits Agent", "wps": [1, 2], "email": "bot@example.
 
 
 def section(tmp_path, token=KEY, project="56"):
-    server = tmp_path / "server.py"
-    server.write_text("")
-    return f'[agent]\ntoken = "{token}"\nproject = {project}\nmcp_server = "{server}"\nworkdir = "{tmp_path}"\n'
+    return f'[agent]\ntoken = "{token}"\nproject = {project}\nworkdir = "{tmp_path}"\n'
 
 
 @pytest.fixture
@@ -47,10 +46,18 @@ def test_session_is_signed_in_as_the_agent_and_lists_its_tasks(write_config, op,
     mcp = argv[argv.index("--mcp-config") + 1]
     assert stat.S_IMODE(os.stat(mcp).st_mode) == 0o600
     server = json.load(open(mcp))["mcpServers"]["openproject"]
+    assert server["command"] == sys.executable and server["args"] == ["-m", "biscuits", "mcp"]
     assert server["env"]["OPENPROJECT_API_KEY"] == KEY
     assert {key for _, _, key in op.requests} == {KEY}  # never the admin token
     assert path.exists()
 
+
+def test_an_old_mcp_server_setting_is_ignored(write_config, op, tmp_path, launched):
+    op.people = {KEY: BOT}
+    write_config(extra=section(tmp_path) + 'mcp_server = "/no/such/server.py"\n')
+    assert run().exit_code == 0
+    mcp = launched[0][launched[0].index("--mcp-config") + 1]
+    assert json.load(open(mcp))["mcpServers"]["openproject"]["args"] == ["-m", "biscuits", "mcp"]
 
 
 def test_refuses_an_openproject_admin_token(write_config, op, tmp_path, launched):

@@ -33,7 +33,6 @@ class AgentConfig:
 
     token: str
     project: int
-    mcp_server: Path
     workdir: Path | None
     docs: Path | None
 
@@ -209,13 +208,12 @@ def _parse_agent(raw: dict, path: Path) -> AgentConfig | None:
     if not agent:
         return None
     token, project = agent.get("token"), agent.get("project")
-    mcp_server, workdir, docs = agent.get("mcp_server"), agent.get("workdir"), agent.get("docs")
+    # An `mcp_server` setting in older configs is ignored: `biscuits mcp` replaced it.
+    workdir, docs = agent.get("workdir"), agent.get("docs")
     if not (isinstance(token, str) and token.strip()):
         raise ConfigError(f"{path}: [agent] token is required")
     if not isinstance(project, int) or isinstance(project, bool):
         raise ConfigError(f"{path}: [agent] project must be a project id")
-    if not (isinstance(mcp_server, str) and mcp_server):
-        raise ConfigError(f"{path}: [agent] mcp_server is required")
     if workdir is not None and not (isinstance(workdir, str) and workdir):
         raise ConfigError(f"{path}: [agent] workdir must be a path")
     if docs is not None and not (isinstance(docs, str) and docs):
@@ -223,7 +221,6 @@ def _parse_agent(raw: dict, path: Path) -> AgentConfig | None:
     return AgentConfig(
         token=token.strip(),
         project=project,
-        mcp_server=Path(mcp_server).expanduser(),
         workdir=Path(workdir).expanduser() if workdir else None,
         docs=Path(docs).expanduser() if docs else None,
     )
