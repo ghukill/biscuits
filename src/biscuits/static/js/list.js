@@ -103,6 +103,7 @@ function renderRow(parts, r, depth, cols, opts, sel, shown) {
       <button class="caret ${open ? "open" : ""} ${kids.length ? "" : "none"}" type="button" tabindex="-1" aria-label="Show subtasks">${ICON.caret}</button>
       <button class="check ${r.done ? "on" : ""}" type="button" title="${r.done ? "Mark incomplete" : "Mark complete"}" aria-label="Complete">${ICON.check}</button>
       <span class="title" spellcheck="false">${esc(r.subject)}</span>
+      ${r.id > 0 ? `<span class="tl-num" title="Task number">#${r.id}</span>` : ""}
       ${allKids.length ? `<span class="subcount" title="${nOpen} open of ${allKids.length} subtasks">${nOpen || allKids.length}${ICON.sub}</span>` : ""}
       ${crumb}
       ${r._preview ? `<span class="badge-preview" title="Not saved to OpenProject (preview)">preview</span>` : ""}

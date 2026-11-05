@@ -206,6 +206,7 @@ a.ppill:hover { text-decoration: none; filter: brightness(.97); }
 .tl-row .caret:hover { background: var(--bg-2); }
 .tl-row .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; outline: 0; border-radius: 5px; padding: .05rem .2rem; }
 .tl-row .title[contenteditable="plaintext-only"], .tl-row .title[contenteditable="true"] { white-space: pre-wrap; background: var(--panel); box-shadow: 0 0 0 2px var(--accent); cursor: text; }
+.tl-row .tl-num { font-size: .74rem; color: var(--muted); opacity: .75; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 .tl-row .crumb { font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex-shrink: 1; }
 .tl-row .crumb:hover { color: var(--accent); }
 .tl-row .details { margin-left: auto; font-size: .76rem; color: var(--muted); display: inline-flex; align-items: center; opacity: 0; flex: none; padding-left: .4rem; }
