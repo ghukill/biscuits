@@ -1,6 +1,6 @@
 import pytest
 
-from biscuits import config
+from biscuits import config, snapshot
 from biscuits.app import create_app
 from conftest import H, login, make_user
 
@@ -93,3 +93,22 @@ def test_archiving_is_a_biscuits_flag_and_never_reaches_openproject(write_config
 def test_archiving_needs_the_csrf_header_and_a_real_boolean(web):
     assert web.post("/api/project/1/archive", json={"archived": True}).status_code == 403
     assert web.post("/api/project/1/archive", json={"archived": "yes"}, headers=H).status_code == 400
+
+
+def test_snapshot_and_detail_name_who_created_the_task(web):
+    row = web.get("/api/snapshot").json["data"]["work_packages"][0]
+    assert (row["author_id"], row["author"]) == (9, "Cass Creator")
+    detail = web.get("/api/wp/1").json["row"]
+    assert (detail["author_id"], detail["author"]) == (9, "Cass Creator")
+
+
+def test_a_task_with_no_author_link_has_a_blank_creator():
+    row = snapshot.make_row({"id": 1, "_links": {}}, {}, {})
+    assert (row["author_id"], row["author"]) == (None, None)
+
+
+def test_a_live_write_keeps_the_creator_on_the_row(write_config, web_as):
+    write_config("live", '"*"')
+    web = web_as()
+    r = web.post("/api/wp", json={"project_id": 1, "subject": "New"}, headers=H)
+    assert r.json["row"]["author"] == "Cass Creator"

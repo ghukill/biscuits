@@ -79,6 +79,7 @@ function columns() {
     { title: "Priority", field: "priority", width: 110, formatter: fmt.priority, ...list("priority"), cssClass: "pickable",
       sorter: (a, b, ra, rb) => (ra.getData().priority_pos ?? 0) - (rb.getData().priority_pos ?? 0) },
     { title: "Accountable", field: "responsible", minWidth: 150, visible: false, formatter: fmt.person, ...list("responsible", UNASSIGNED), ...nullsLast },
+    { title: "Created by", field: "author", minWidth: 150, visible: false, formatter: fmt.person, ...list("author"), ...nullsLast },
     { title: "Start", field: "start", width: 110, formatter: fmt.date, visible: false, ...nullsLast },
     { title: "Updated", field: "updated", width: 110, formatter: fmt.date, visible: false },
     { title: "Created", field: "created", width: 110, formatter: fmt.date, visible: false },

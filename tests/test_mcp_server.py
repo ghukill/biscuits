@@ -197,3 +197,10 @@ def test_starts_and_lists_tools_with_no_credentials_or_biscuits_config(tmp_path)
     assert listing["result"]["isError"]
     assert "not configured" in listing["result"]["content"][0]["text"]
     assert list(tmp_path.iterdir()) == []  # it didn't create a biscuits directory either
+
+
+def test_work_packages_name_who_created_them(http):
+    http.routes[("GET", "/api/v3/work_packages/5")] = {
+        "id": 5, "_links": {"author": {"href": "/api/v3/users/9", "title": "Cass Creator"}}}
+    _, task = call("get_work_package", work_package_id=5)
+    assert task["author"] == "Cass Creator"

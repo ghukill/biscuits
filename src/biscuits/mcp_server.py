@@ -116,6 +116,7 @@ def fmt_wp(e):
         "type": link_title("type"),
         "status": link_title("status"),
         "assignee": link_title("assignee"),
+        "author": link_title("author"),
         "start_on": e.get("startDate"),
         "due_on": e.get("dueDate"),
         "pct_done": e.get("percentageDone"),
@@ -360,7 +361,7 @@ TOOLS = [
     },
     {
         "name": "search_work_packages",
-        "description": "Search/filter work packages. Returns id, subject, project, type, status, assignee, dates, pct_done, lockVersion.",
+        "description": "Search/filter work packages. Returns id, subject, project, type, status, assignee, author, dates, pct_done, lockVersion.",
         "inputSchema": {"type": "object", "properties": {
             "project_id": {"type": "integer", "description": "restrict to a project id"},
             "subject_contains": {"type": "string", "description": "substring match on subject"},

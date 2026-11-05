@@ -84,6 +84,7 @@ def make_row(e, status_meta, prio_meta):
     tid, tname = _link(e, "type")
     aid, aname = _link(e, "assignee")
     rid, rname = _link(e, "responsible")
+    author_id, author = _link(e, "author")
     parent_id, _ = _link(e, "parent")
     sm = status_meta.get(sid, {})
     subject = e.get("subject") or ""
@@ -105,6 +106,7 @@ def make_row(e, status_meta, prio_meta):
         "priority_pos": prio_meta.get(prid, {}).get("position"),
         "assignee_id": aid, "assignee": aname,
         "responsible_id": rid, "responsible": rname,
+        "author_id": author_id, "author": author,  # who created the task
         "start": e.get("startDate") or (e.get("derivedStartDate") if rollup else None),
         "due": e.get("dueDate") or (e.get("derivedDueDate") if rollup else None),
         "own_start": e.get("startDate"), "own_due": e.get("dueDate"),

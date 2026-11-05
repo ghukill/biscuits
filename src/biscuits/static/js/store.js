@@ -214,6 +214,7 @@ export async function create({ project_id, parent_id, subject, assignee_id, due 
     type: "Task", status_id: def.id, status: def.name, status_color: def.color, done: false,
     priority: "Normal", assignee_id: assignee_id || null,
     assignee: assignee_id ? (S.users.get(+assignee_id) || {}).name : null,
+    author_id: S.meId, author: S.me,
     due: due || null, start: null, parent_id: parent_id || null, pct: null,
     created: new Date().toISOString().slice(0, 10), _local: true, _saving: true,
   };
