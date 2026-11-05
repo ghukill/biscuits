@@ -28,6 +28,17 @@ class ConfigError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class AgentConfig:
+    """The account `biscuits agent` signs in as."""
+
+    token: str
+    project: int
+    mcp_server: Path
+    workdir: Path | None
+    docs: Path | None
+
+
+@dataclass(frozen=True)
 class Config:
     path: Path
     op_url: str
@@ -43,6 +54,7 @@ class Config:
     port: int
     base_path: str
     data_dir: Path
+    agent: AgentConfig | None = None
 
     @property
     def db_file(self) -> Path:
@@ -188,6 +200,32 @@ def _parse(path: Path) -> Config:
         base_path=base_path.rstrip("/"),
         # A relative data_dir means relative to the config file.
         data_dir=path.parent / Path(data_dir).expanduser(),
+        agent=_parse_agent(raw, path),
+    )
+
+
+def _parse_agent(raw: dict, path: Path) -> AgentConfig | None:
+    agent = _table(raw, "agent")
+    if not agent:
+        return None
+    token, project = agent.get("token"), agent.get("project")
+    mcp_server, workdir, docs = agent.get("mcp_server"), agent.get("workdir"), agent.get("docs")
+    if not (isinstance(token, str) and token.strip()):
+        raise ConfigError(f"{path}: [agent] token is required")
+    if not isinstance(project, int) or isinstance(project, bool):
+        raise ConfigError(f"{path}: [agent] project must be a project id")
+    if not (isinstance(mcp_server, str) and mcp_server):
+        raise ConfigError(f"{path}: [agent] mcp_server is required")
+    if workdir is not None and not (isinstance(workdir, str) and workdir):
+        raise ConfigError(f"{path}: [agent] workdir must be a path")
+    if docs is not None and not (isinstance(docs, str) and docs):
+        raise ConfigError(f"{path}: [agent] docs must be a path")
+    return AgentConfig(
+        token=token.strip(),
+        project=project,
+        mcp_server=Path(mcp_server).expanduser(),
+        workdir=Path(workdir).expanduser() if workdir else None,
+        docs=Path(docs).expanduser() if docs else None,
     )
 
 

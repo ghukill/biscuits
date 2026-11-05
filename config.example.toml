@@ -41,3 +41,16 @@ encryption_key = "a-fernet-key"
 # Where the database, snapshot caches, write log, pid file and server log live.
 # Defaults to the directory holding this file.
 # data_dir = "~/.biscuits"
+
+# Optional. Needed only for `biscuits agent`, which starts a Claude Code session
+# signed in as a dedicated, non-admin OpenProject account.
+# [agent]
+# token = "the-agent-accounts-openproject-api-key"
+# Tasks assigned to the agent in this project are offered in the session.
+# project = 56
+# The OpenProject MCP server the session uses.
+# mcp_server = "/path/to/openproject-mcp/server.py"
+# Where the session starts. Defaults to the current directory.
+# workdir = "/path/to/biscuits"
+# Planning docs kept outside the repo, if any. The session can read and edit them.
+# docs = "/path/to/planning/biscuits"

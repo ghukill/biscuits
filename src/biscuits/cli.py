@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, accounts, client, config, daemon, opadmin, writes
+from . import __version__, accounts, agent, client, config, daemon, opadmin, writes
 
 
 def _load() -> config.Config:
@@ -192,6 +192,7 @@ def config_show():
     click.echo(f"openproject:  {cfg.op_url}")
     click.echo(f"admin token:  {'*' * 8}{cfg.op_admin_token[-4:] if len(cfg.op_admin_token) > 12 else ''}")
     click.echo(f"login keys:   {'set' if cfg.secret_key and cfg.encryption_key else 'MISSING'}")
+    click.echo(f"agent:        {f'project {cfg.agent.project}, token set' if cfg.agent else 'not set up'}")
     click.echo(f"writes:       {_writes_summary(cfg)}")
     click.echo(f"listen:       {_url(cfg)}")
     click.echo(f"data dir:     {cfg.data_dir}")
@@ -251,6 +252,14 @@ def doctor():
     except client.OPError as e:
         report(False, f"OpenProject at {cfg.op_url}: {e}")
     sys.exit(1 if failed else 0)
+
+
+# ---------- agent ----------
+
+@main.command("agent")
+def agent_session():
+    """Start a Claude Code session signed in as the agent account from [agent]."""
+    agent.launch()
 
 
 # ---------- admin ----------

@@ -107,6 +107,7 @@ By default, everything biscuits keeps lives next to the config file:
 | `snapshots/<account id>.json` | Each person's cached OpenProject data, so restarts show data immediately |
 | `write-log.jsonl` | Audit log of every edit, sent or not |
 | `biscuits.db` | Accounts (with encrypted keys) and archived projects. SQLite, migrated automatically |
+| `agent-mcp.json` | The `biscuits agent` session's connection settings, including its key |
 | `biscuits.log`, `biscuits.pid` | Background server log and lock |
 
 ## Writes
@@ -120,6 +121,21 @@ in preview. Every attempt is logged, and there is no delete operation in the cod
 biscuits writes status    # is the gate open? what's been sent?
 biscuits writes log -n 50
 ```
+
+## The agent account
+
+`biscuits agent` starts a Claude Code session signed in as a dedicated OpenProject
+account, so tasks can be assigned to it. It lists the open tasks assigned to it and
+asks which to work on. You approve its work as it goes, and nothing runs unattended.
+
+To set it up, create a non-admin OpenProject user, make it a member of the project,
+and add an `[agent]` section to the config (see `config.example.toml`). biscuits
+refuses a token that belongs to an OpenProject admin. The session's key is also
+written to `agent-mcp.json` in the data directory, mode 600.
+
+The session runs as your own Unix user, so the agent's permissions are limited in
+OpenProject but not on this machine. It's told not to use other credentials, but
+nothing stops it from reading them, so check what you approve.
 
 ## Other admin commands
 
