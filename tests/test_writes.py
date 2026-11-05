@@ -102,3 +102,10 @@ def test_derived_dates_only_show_for_rolled_up_tasks(manual, expected):
          "startDate": None, "derivedStartDate": "2026-12-15"}
     row = snapshot.make_row(e, {}, {})
     assert row["due"] == expected and row["start"] == expected
+
+
+def test_the_creator_cannot_be_changed(write_config, op, conn):
+    write_config("live", '"*"')
+    with pytest.raises(writes.WriteError):
+        writes.update(conn, 1, {"author_id": 8})
+    assert op.writes == []

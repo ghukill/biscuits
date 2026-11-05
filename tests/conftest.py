@@ -22,11 +22,13 @@ H = {"X-Biscuits": "1"}
 def wp(id=1, project=1, subject="A task", links=None):
     return {
         "_type": "WorkPackage", "id": id, "subject": subject, "lockVersion": 3,
+        "createdAt": "2026-11-02T14:30:00Z",
         "_links": {
             "project": {"href": f"/api/v3/projects/{project}", "title": "P"},
             "status": {"href": "/api/v3/statuses/1", "title": "New"},
             "priority": {"href": "/api/v3/priorities/1", "title": "Normal"},
             "type": {"href": "/api/v3/types/1", "title": "Task"},
+            "author": {"href": "/api/v3/users/9", "title": "Cass Creator"},
             **(links or {}),
         },
     }

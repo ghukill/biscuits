@@ -139,6 +139,7 @@ function fields(r) {
     field("Projects", `<a href="${href(`/project/${r.project_id}`)}" data-nav class="ppill" style="--h:${hue(r.project || "")}">${esc(r.project || "")}</a>`),
     field("Status", statusPill({ name: r.status, color: r.status_color }) || `<span class="muted">—</span>`, "status"),
     field("Priority", r.priority ? `<span class="pill prio-${esc(r.priority)}">${esc(r.priority)}</span>` : "—", "priority"),
+    field("Created by", `${r.author ? `${avatar(r.author, "sm")}<span>${esc(r.author)}</span>` : `<span class="muted">Unknown</span>`}${r.created ? `<small>${esc(longDate(r.created))}</small>` : ""}`),
   ];
   if (r.responsible) out.push(field("Accountable", `${avatar(r.responsible, "sm")}<span>${esc(r.responsible)}</span>`));
   if (r.pct != null && r.pct > 0) out.push(field("Progress", `<div class="bar"><i style="width:${r.pct}%"></i></div><small>${r.pct}%</small>`));
