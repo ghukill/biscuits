@@ -266,3 +266,13 @@ def create(conn, fields):
         body["description"] = {"raw": str(fields["description"])[:MAX_TEXT]}
     return _execute(conn, "create", "POST", "/work_packages", body, {project_id},
                     {"parent": parent_id})
+
+
+def create_section(conn, project_id, name, type_id):
+    """Create a section: a top-level Summary task with a [bracketed] name."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise WriteError("A section needs a name")
+    # Cap the name, not the subject, so the closing bracket always survives.
+    subject = f"[{name[:MAX_SUBJECT - 2]}]"
+    return create(conn, {"project_id": project_id, "subject": subject, "type_id": type_id})

@@ -18,6 +18,7 @@ export const S = {
   users: new Map(),      // id -> {id, name}
   projects: new Map(),
   archived: new Set(),   // project ids archived in biscuits
+  sectionOrder: new Map(), // section id -> its stored position
   account: null,         // the signed-in biscuits account
   me: null, meId: null,
   writes: { mode: "preview", write_projects: [], all_projects: false },
@@ -56,6 +57,7 @@ export function adopt(body) {
   S.fetchedAt = body.fetched_at;
   if (body.writes) S.writes = body.writes;
   S.archived = new Set(body.archived_projects || []);
+  S.sectionOrder = new Map((body.section_order || []).map((id, n) => [id, n]));
   if (body.account) S.account = body.account;
   S.me = S.snap.me; S.meId = S.snap.me_id;
   S.statuses = new Map(S.snap.statuses.map((s) => [s.id, s]));
@@ -104,6 +106,10 @@ export function ancestors(r) {
 }
 export const isSection = (r) => !!(r && r.section != null && !r.parent_id);
 export const sectionTitle = (r) => (r.section && r.section !== "Untitled section" ? r.section : "Untitled section");
+// Stored positions first, then the rest in id order (see sections.py).
+const positionOf = (r) => S.sectionOrder.get(r.id) ?? Number.MAX_SAFE_INTEGER;
+export const sectionsOf = (pid) => allRows().filter((r) => r.project_id === pid && isSection(r))
+  .sort((a, b) => positionOf(a) - positionOf(b) || a.id - b.id);
 export const liveProject = (pid) => S.writes.mode === "live" && (S.writes.all_projects || S.writes.write_projects.includes(pid));
 export const projectName = (pid) => (S.projects.get(pid) || {}).name || "";
 const byName = (a, b) => a.name.localeCompare(b.name);
@@ -116,7 +122,10 @@ export const openKids = (id) => children(id).filter((c) => !c.done).length;
 const FIELDS = ["subject", "description", "start", "due", "status_id", "assignee_id", "priority_id", "parent_id"];
 
 function applyLocal(r, ch) {
-  if ("subject" in ch) r.subject = ch.subject;
+  if ("subject" in ch) {
+    r.subject = ch.subject;
+    if (r.section != null) r.section = (/^\[(.*)\]$/s.exec(r.subject) || [])[1]?.trim() ?? null;
+  }
   if ("start" in ch) { r.start = ch.start || null; r.own_start = r.start; }
   if ("due" in ch) { r.due = ch.due || null; r.own_due = r.due; }
   if ("status_id" in ch) {
@@ -259,6 +268,52 @@ export async function setArchived(pid, archived) {
     toast(archived ? `“${name}” archived` : `“${name}” is back in your projects`, archived ? { action: "Undo", onAction: () => setArchived(pid, false) } : {});
   } catch (e) {
     toast(`Couldn't ${archived ? "archive" : "unarchive"} “${name}”: ${e.message}`, { kind: "error", ms: 8000 });
+  }
+}
+
+// ---------- sections ----------
+// A subject is capped at 255 characters, and the brackets count.
+export const MAX_SECTION_NAME = 253;
+
+export async function createSection(pid, name) {
+  try {
+    const res = await api(`/api/project/${pid}/sections`, { method: "POST", body: JSON.stringify({ name }) });
+    if (!res.sent || !res.row) return toast("That section wasn't saved: this project isn't write-enabled.", { kind: "warn", ms: 8000 });
+    S.rows.set(res.row.id, res.row);
+    reindex();
+    emit({ type: "create", ids: [res.row.id] });
+  } catch (e) {
+    toast(`Couldn't add the section: ${e.message}`, { kind: "error", ms: 8000 });
+  }
+}
+
+export const renameSection = (id, name) => update(id, { subject: `[${name.slice(0, MAX_SECTION_NAME)}]` });
+
+async function saveSectionOrder(pid, ids) {
+  const before = S.sectionOrder;
+  S.sectionOrder = new Map(before);
+  ids.forEach((id, n) => S.sectionOrder.set(id, n));
+  emit({ type: "update", ids: [] });
+  try {
+    await api(`/api/project/${pid}/sections/order`, { method: "POST", body: JSON.stringify({ order: ids }) });
+    return true;
+  } catch (e) {
+    S.sectionOrder = before;
+    emit({ type: "update", ids: [] });
+    toast(`Couldn't move the section: ${e.message}`, { kind: "error", ms: 8000 });
+    return false;
+  }
+}
+
+// Move a section into another's place. Sections hidden from the current view keep their place too.
+export async function moveSection(pid, id, targetId) {
+  const before = sectionsOf(pid).map((s) => s.id);
+  const to = before.indexOf(targetId);
+  if (id === targetId || to < 0 || !before.includes(id)) return;
+  const after = before.filter((s) => s !== id);
+  after.splice(to, 0, id);
+  if (await saveSectionOrder(pid, after)) {
+    toast(`Moved “${trim(sectionTitle(row(id)))}”`, { action: "Undo", onAction: () => saveSectionOrder(pid, before) });
   }
 }
 

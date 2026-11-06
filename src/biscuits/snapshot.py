@@ -38,6 +38,7 @@ REOPEN_STATUS_NAME = "New"
 
 # The Asana import turned each Asana *section* into a top-level
 # "Summary task" whose subject is wrapped in [brackets].
+SECTION_TYPE_NAME = "Summary task"
 _SECTION_RE = re.compile(r"^\[(.*)\]$", re.S)
 
 _lock = threading.Lock()
@@ -88,7 +89,7 @@ def make_row(e, status_meta, prio_meta):
     parent_id, _ = _link(e, "parent")
     sm = status_meta.get(sid, {})
     subject = e.get("subject") or ""
-    sec = section_name(subject) if (not parent_id and tname == "Summary task") else None
+    sec = section_name(subject) if (not parent_id and tname == SECTION_TYPE_NAME) else None
     links = e.get("_links") or {}
     # OP keeps computing derived dates from subtasks even for a manually
     # scheduled parent. There, a blank own date means blank: it has to stay blank.

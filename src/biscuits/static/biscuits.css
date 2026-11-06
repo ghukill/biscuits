@@ -190,6 +190,16 @@ a.ppill:hover { text-decoration: none; filter: brightness(.97); }
 .tl-group.sky .gtitle { color: color-mix(in srgb, var(--sky) 80%, var(--text)); }
 .tl-group.sage .gtitle { color: var(--accent); }
 .tl-group:hover .gcaret { background: var(--bg-2); }
+.tl-group.dragging, .bcol.dragging { opacity: .4; }
+.section-menu { border: 0; background: none; padding: 0; width: 24px; height: 22px; display: grid; place-items: center; color: var(--muted); cursor: pointer; border-radius: 6px; }
+.section-menu svg { width: 16px; height: 16px; }
+.section-menu:hover { background: var(--bg-2); color: var(--text); }
+.bcol-head .section-menu:hover { background: var(--panel); }
+.tl > .add-section { margin: 1.1rem 0 .5rem .3rem; }
+.ask { display: flex; flex-direction: column; gap: .5rem; padding: .4rem; }
+.ask label { display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; font-weight: 600; color: var(--muted); }
+.ask input { font: inherit; font-weight: 400; font-size: .9rem; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .35rem .5rem; }
+.ask-actions { display: flex; justify-content: flex-end; }
 .tl-body { border-top: 1px solid var(--line); }
 .tl-row { border-bottom: 1px solid var(--line); background: var(--panel); min-height: 38px; cursor: pointer; transition: background .08s; }
 .tl-row:hover { background: color-mix(in srgb, var(--bg-2) 60%, var(--panel)); }
@@ -261,7 +271,9 @@ body.pane-open .home-grid { grid-template-columns: 1fr; }
 .board { display: flex; gap: .9rem; align-items: flex-start; min-height: calc(100vh - 220px); padding-bottom: 1rem; }
 .bcol { flex: 0 0 290px; background: var(--bg-2); border-radius: 14px; padding: .5rem; max-height: calc(100vh - 210px); display: flex; flex-direction: column; }
 .bcol-head { display: flex; align-items: center; justify-content: space-between; padding: .3rem .5rem .55rem; font-weight: 700; font-size: .92rem; }
-.bcol-head .gcount { font-size: .74rem; color: var(--muted); background: var(--panel); border-radius: 999px; padding: 0 .5rem; }
+.bcol-head[draggable="true"] { cursor: grab; }
+.bcol-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bcol-head .gcount { margin-left: .4rem; font-size: .74rem; color: var(--muted); background: var(--panel); border-radius: 999px; padding: 0 .5rem; }
 .bcol-body { display: flex; flex-direction: column; gap: .45rem; overflow-y: auto; padding: 2px; }
 .bcard { background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: .6rem .7rem; box-shadow: 0 1px 2px rgba(90,70,50,.05); cursor: pointer; transition: box-shadow .12s, border-color .12s; }
 .bcard:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); box-shadow: var(--shadow); }

@@ -264,4 +264,5 @@ uv run biscuits --config ./dev/config.toml serve
 | `snapshot.py` | Per-account snapshot caches, with Asana-section detection |
 | `db.py`, `migrations/` | biscuits' own SQLite database and its Alembic migrations |
 | `archive.py` | Archived projects (a biscuits flag; OpenProject isn't touched) |
+| `sections.py` | The order of each project's sections (stored in biscuits; OpenProject isn't touched) |
 | `static/`, `templates/` | The single-page UI |

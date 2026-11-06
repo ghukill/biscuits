@@ -73,6 +73,22 @@ export function menu(anchor, items, { onPick, placeholder = "Search…", current
   return popover(anchor, box, { width: 280 });
 }
 
+// ---------- ask for one line of text ----------
+export function askText(anchor, { label, value = "", placeholder = "", action = "Save", maxlength = 255, onSubmit }) {
+  const box = h(`<form class="ask"><label>${esc(label)}<input value="${esc(value)}" placeholder="${esc(placeholder)}" maxlength="${maxlength}" autocomplete="off"></label><div class="ask-actions"><button class="btn sm primary">${esc(action)}</button></div></form>`);
+  const field = box.querySelector("input");
+  box.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = field.value.trim();
+    if (!v) return field.focus();
+    closePopover();
+    onSubmit(v);
+  });
+  const el = popover(anchor, box, { width: 300 });
+  setTimeout(() => field.select(), 0);
+  return el;
+}
+
 // ---------- specific pickers ----------
 export function pickPerson(anchor, users, current, onPick) {
   const items = [
