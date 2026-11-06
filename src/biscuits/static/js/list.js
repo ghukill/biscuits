@@ -48,6 +48,9 @@ export async function usersForPicker(pid) {
  *   visible: (r)=>bool // which subtasks to show when expanded
  *   empty: "text",
  *   scope: "key prefix for collapsed groups",
+ *   sectionMenu: (button, sectionId)=>void,   // for groups with manage: true
+ *   moveSection: (sectionId, targetId)=>void, // dragged one section onto another
+ *   addSection: (button)=>void,               // shows "Add section" after the groups
  * }
  */
 export function renderList(host, opts) {
@@ -66,13 +69,14 @@ export function renderList(host, opts) {
     const rows = g.ids.map(row).filter(Boolean);
     any ||= rows.length > 0 || !!g.add;
     if (g.title != null) {
-      parts.push(`<div class="tl-group ${isCol ? "closed" : ""} ${g.tone || ""}" data-ck="${esc(ck)}" data-drop="${g.dropParent ?? ""}">
+      parts.push(`<div class="tl-group ${isCol ? "closed" : ""} ${g.tone || ""}" data-ck="${esc(ck)}" data-drop="${g.dropParent ?? ""}" ${g.sectionId ? `data-section="${g.sectionId}"` : ""} ${g.manage ? `draggable="true"` : ""}>
         <button class="gcaret" type="button" aria-label="Toggle section">${ICON.caret}</button>
         <span class="gtitle">${esc(g.title)}</span><span class="gcount">${rows.length}</span>
-        ${g.sub ? `<span class="gsub">${esc(g.sub)}</span>` : ""}</div>`);
+        ${g.sub ? `<span class="gsub">${esc(g.sub)}</span>` : ""}
+        ${g.manage ? `<button class="section-menu" type="button" title="Section actions" aria-label="Section actions">${ICON.dots}</button>` : ""}</div>`);
     }
     if (isCol) continue;
-    parts.push(`<div class="tl-body" data-drop="${g.dropParent ?? ""}">`);
+    parts.push(`<div class="tl-body" data-drop="${g.dropParent ?? ""}" ${g.sectionId ? `data-section="${g.sectionId}"` : ""}>`);
     const showAll = !g.limit || moreOpen.has(ck) || rows.length <= g.limit + 2;
     const slice = showAll ? rows : rows.slice(0, g.limit);
     for (const r of slice) renderRow(parts, r, 0, cols, opts, sel, new Set(g.ids));
@@ -83,6 +87,7 @@ export function renderList(host, opts) {
     parts.push(`</div>`);
   }
   if (!any) parts.push(`<div class="tl-empty">${esc(opts.empty || "Nothing to show.")}</div>`);
+  if (opts.addSection) parts.push(`<button class="btn sm add-section" type="button">${ICON.plus} Add section</button>`);
   parts.push(`</div>`);
   host.innerHTML = parts.join("");
   if (!host._wired) wire(host);
@@ -204,7 +209,11 @@ function wire(host) {
   host._wired = true;
   host.addEventListener("click", (e) => {
     const t = e.target;
+    const addSection = t.closest(".add-section");
+    if (addSection) return host._list.opts.addSection(addSection);
     const g = t.closest(".tl-group");
+    const sectionMenu = t.closest(".section-menu");
+    if (sectionMenu) return host._list.opts.sectionMenu(sectionMenu, +g.dataset.section);
     if (g) {
       const ck = g.dataset.ck;
       collapsed.has(ck) ? collapsed.delete(ck) : collapsed.add(ck);
@@ -245,29 +254,50 @@ function wire(host) {
   });
 
   // drag a row onto a section (group header or body) to move it there
-  let dragId = null;
+  // or a section header onto another section to reorder them
+  // A drop can re-render the list and remove the dragged element, and then no
+  // dragend arrives, so both of these are also cleared at each start and drop.
+  let dragId = null, dragSection = null;
   host.addEventListener("dragstart", (e) => {
+    dragId = dragSection = null;
     const rowEl = e.target.closest(".tl-row");
+    const groupEl = e.target.closest(".tl-group");
+    if (groupEl) {
+      dragSection = +groupEl.dataset.section;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(dragSection));
+      groupEl.classList.add("dragging");
+      return;
+    }
     if (!rowEl) return;
     dragId = +rowEl.dataset.id;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(dragId));
     rowEl.classList.add("dragging");
   });
-  host.addEventListener("dragend", () => { dragId = null; $$(".drop-on", host).forEach((x) => x.classList.remove("drop-on")); $$(".dragging", host).forEach((x) => x.classList.remove("dragging")); });
+  host.addEventListener("dragend", () => { dragId = dragSection = null; $$(".drop-on", host).forEach((x) => x.classList.remove("drop-on")); $$(".dragging", host).forEach((x) => x.classList.remove("dragging")); });
   const target = (e) => e.target.closest("[data-drop]:not([data-drop=''])");
+  const sectionTarget = (e) => e.target.closest("[data-section]");
   host.addEventListener("dragover", (e) => {
-    const d = dragId && target(e);
+    const d = dragSection ? sectionTarget(e) : dragId && target(e);
     if (!d) return;
     e.preventDefault();
     $$(".drop-on", host).forEach((x) => x !== d && x.classList.remove("drop-on"));
     d.classList.add("drop-on");
   });
   host.addEventListener("drop", (e) => {
+    const movedSection = dragSection, movedRow = dragId;
+    dragSection = dragId = null;
+    if (movedSection) {
+      const s = sectionTarget(e);
+      if (!s) return;
+      e.preventDefault();
+      return host._list.opts.moveSection(movedSection, +s.dataset.section);
+    }
     const d = target(e);
-    if (!d || !dragId) return;
+    if (!d || !movedRow) return;
     e.preventDefault();
-    const r = row(dragId);
+    const r = row(movedRow);
     const parent = d.dataset.drop === "root" ? null : +d.dataset.drop;
     if (r && r.parent_id !== parent) {
       update(r.id, { parent_id: parent }, { undoLabel: `Moved “${r.subject.slice(0, 40)}”` });

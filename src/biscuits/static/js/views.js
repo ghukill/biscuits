@@ -2,9 +2,9 @@
 // Each view renders into #view and is re-run whenever the store changes.
 
 import { $, $$, esc, h, avatar, friendlyDate, longDate, dueClass, hue, ago, T, RANGES, inRange, ICON } from "./util.js";
-import { S, row, children, allRows, workingRows, isSection, sectionTitle, liveProject, activeProjects, archivedProjects, archivedInOP, projectName, toggleComplete, update, create, writeLog, setArchived } from "./store.js";
+import { S, row, children, allRows, workingRows, isSection, sectionTitle, sectionsOf, createSection, renameSection, moveSection, MAX_SECTION_NAME, liveProject, activeProjects, archivedProjects, archivedInOP, projectName, toggleComplete, update, create, writeLog, setArchived } from "./store.js";
 import { renderList, pickFor } from "./list.js";
-import { menu, toast } from "./ui.js";
+import { menu, askText, toast } from "./ui.js";
 import { href, go, openTask, currentTask, setParam } from "./nav.js";
 
 // ---------- shared: completion filter (Asana's "Incomplete / Completed / All") ----------
@@ -147,16 +147,38 @@ export function viewPeople(el, uid, { mine = false } = {}) {
 function projectGroups(pid, vis) {
   const roots = allRows().filter((r) => r.project_id === pid && !(r.parent_id && row(r.parent_id)));
   // A closed section with nothing to show would just be an empty header.
-  const sections = roots.filter(isSection).filter((s) => !s.done || children(s.id).some(vis)).sort((a, b) => a.id - b.id);
+  const sections = sectionsOf(pid).filter((s) => !s.done || children(s.id).some(vis));
   const loose = roots.filter((r) => !isSection(r) && vis(r)).sort((a, b) => a.id - b.id);
   const groups = [];
   if (loose.length || !sections.length) {
     groups.push({ key: "root", title: sections.length ? "No section" : null, ids: loose.map((r) => r.id), add: { project_id: pid }, dropParent: "root" });
   }
   for (const s of sections) {
-    groups.push({ key: `s${s.id}`, title: sectionTitle(s), sectionId: s.id, ids: children(s.id).filter(vis).map((r) => r.id), add: { parent_id: s.id }, dropParent: s.id });
+    groups.push({ key: `s${s.id}`, title: sectionTitle(s), sectionId: s.id, ids: children(s.id).filter(vis).map((r) => r.id), add: { parent_id: s.id }, dropParent: s.id, manage: liveProject(pid) && s.can_edit !== false });
   }
   return groups;
+}
+
+function promptAddSection(anchor, pid) {
+  askText(anchor, { label: "New section name", action: "Add section", maxlength: MAX_SECTION_NAME, onSubmit: (name) => createSection(pid, name) });
+}
+
+// Up and down step past the sections showing now, so a move always shows.
+function openSectionMenu(anchor, pid, id, groups, [earlier, later]) {
+  const shown = groups.filter((g) => g.sectionId).map((g) => g.sectionId);
+  const at = shown.indexOf(id);
+  const items = [{ value: "rename", label: "Rename section" }];
+  if (at > 0) items.push({ value: "earlier", label: earlier });
+  if (at < shown.length - 1) items.push({ value: "later", label: later });
+  menu(anchor, items, {
+    search: false,
+    onPick: (v) => {
+      if (v === "earlier") return moveSection(pid, id, shown[at - 1]);
+      if (v === "later") return moveSection(pid, id, shown[at + 1]);
+      const s = row(id);
+      askText(anchor, { label: "Section name", value: s.section || "", maxlength: MAX_SECTION_NAME, onSubmit: (name) => { if (name !== s.section) renameSection(id, name); } });
+    },
+  });
 }
 
 export function viewProject(el, pid, q) {
@@ -182,29 +204,45 @@ export function viewProject(el, pid, q) {
   }
   const vis = visibleFn(compOf("project"));
   const groups = projectGroups(pid, vis);
-  if (board) return renderBoard($("#list", el), groups, vis);
+  const sectionActions = {
+    addSection: live ? (button) => promptAddSection(button, pid) : null,
+    moveSection: (id, target) => moveSection(pid, id, target),
+  };
+  if (board) {
+    return renderBoard($("#list", el), groups, vis, {
+      ...sectionActions,
+      sectionMenu: (button, id) => openSectionMenu(button, pid, id, groups, ["Move left", "Move right"]),
+    });
+  }
   renderList($("#list", el), {
     scope: `p${pid}`, groups, cols: ["assignee", "due", "status", "priority"], visible: vis, draggable: true,
     empty: "No tasks in this project yet.",
+    ...sectionActions,
+    sectionMenu: (button, id) => openSectionMenu(button, pid, id, groups, ["Move up", "Move down"]),
   });
 }
 
 // ---------- Board (columns = sections, like Asana) ----------
-function renderBoard(host, groups, vis) {
+function renderBoard(host, groups, vis, actions) {
+  host._actions = actions;
   if (host._editing) return;
   const sel = currentTask();
   host.innerHTML = `<div class="board">${groups.map((g) => `
-    <div class="bcol" data-drop="${g.dropParent}">
-      <div class="bcol-head"><span>${esc(g.title || "No section")}</span><span class="gcount">${g.ids.length}</span></div>
+    <div class="bcol" data-drop="${g.dropParent}" ${g.sectionId ? `data-section="${g.sectionId}"` : ""}>
+      <div class="bcol-head" ${g.manage ? `draggable="true"` : ""}><span class="bcol-title">${esc(g.title || "No section")}</span><span class="gcount">${g.ids.length}</span>${g.manage ? `<button class="section-menu" type="button" title="Section actions" aria-label="Section actions">${ICON.dots}</button>` : ""}</div>
       <div class="bcol-body">
         ${g.ids.map(row).filter(Boolean).map((r) => card(r, sel, vis)).join("")}
         <div class="bcard-add" data-add='${esc(JSON.stringify(g.add))}'>${ICON.plus} Add task</div>
       </div>
-    </div>`).join("")}</div>`;
+    </div>`).join("")}${actions.addSection ? `<button class="btn sm add-section" type="button">${ICON.plus} Add section</button>` : ""}</div>`;
   if (host._wired) return;
   host._wired = true;
   host.addEventListener("click", (e) => {
     const t = e.target;
+    const addSection = t.closest(".add-section");
+    if (addSection) return host._actions.addSection(addSection);
+    const sectionMenu = t.closest(".section-menu");
+    if (sectionMenu) return host._actions.sectionMenu(sectionMenu, +sectionMenu.closest(".bcol").dataset.section);
     const add = t.closest(".bcard-add");
     if (add) return boardAdd(host, add);
     const c = t.closest(".bcard");
@@ -215,15 +253,35 @@ function renderBoard(host, groups, vis) {
     if (pk) return pickFor(pk.dataset.pick, pk, r);
     openTask(r.id);
   });
-  let dragId = null;
-  host.addEventListener("dragstart", (e) => { const c = e.target.closest(".bcard"); if (!c) return; dragId = +c.dataset.id; c.classList.add("dragging"); e.dataTransfer.setData("text/plain", String(dragId)); });
-  host.addEventListener("dragend", () => { dragId = null; $$(".drop-on,.dragging", host).forEach((x) => x.classList.remove("drop-on", "dragging")); });
-  host.addEventListener("dragover", (e) => { const col = dragId && e.target.closest(".bcol"); if (!col) return; e.preventDefault(); $$(".drop-on", host).forEach((x) => x !== col && x.classList.remove("drop-on")); col.classList.add("drop-on"); });
+  // A drop can re-render the board and remove the dragged element, and then no
+  // dragend arrives, so both of these are also cleared at each start and drop.
+  let dragId = null, dragSection = null;
+  host.addEventListener("dragstart", (e) => {
+    dragId = dragSection = null;
+    const head = e.target.closest(".bcol-head");
+    if (head) {
+      const col = head.closest(".bcol");
+      dragSection = +col.dataset.section;
+      col.classList.add("dragging");
+      e.dataTransfer.setData("text/plain", String(dragSection));
+      return;
+    }
+    const c = e.target.closest(".bcard"); if (!c) return; dragId = +c.dataset.id; c.classList.add("dragging"); e.dataTransfer.setData("text/plain", String(dragId));
+  });
+  host.addEventListener("dragend", () => { dragId = dragSection = null; $$(".drop-on,.dragging", host).forEach((x) => x.classList.remove("drop-on", "dragging")); });
+  const dropCol = (e) => (dragSection ? e.target.closest(".bcol[data-section]") : dragId && e.target.closest(".bcol"));
+  host.addEventListener("dragover", (e) => { const col = dropCol(e); if (!col) return; e.preventDefault(); $$(".drop-on", host).forEach((x) => x !== col && x.classList.remove("drop-on")); col.classList.add("drop-on"); });
   host.addEventListener("drop", (e) => {
-    const col = e.target.closest(".bcol");
-    if (!col || !dragId) return;
+    const col = dropCol(e);
+    const movedSection = dragSection, movedCard = dragId;
+    dragSection = dragId = null;
+    if (col && movedSection) {
+      e.preventDefault();
+      return host._actions.moveSection(movedSection, +col.dataset.section);
+    }
+    if (!col || !movedCard) return;
     e.preventDefault();
-    const r = row(dragId);
+    const r = row(movedCard);
     const parent = col.dataset.drop === "root" ? null : +col.dataset.drop;
     if (r && r.parent_id !== parent) update(r.id, { parent_id: parent }, { undoLabel: `Moved “${r.subject.slice(0, 40)}”` });
   });

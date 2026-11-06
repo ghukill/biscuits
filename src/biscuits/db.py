@@ -39,6 +39,18 @@ class ArchivedProject(Base):
     archived_by: Mapped[int | None] = mapped_column(Integer)
 
 
+class SectionPosition(Base):
+    """Where a section sits in its project. See sections.py."""
+
+    __tablename__ = "section_positions"
+
+    section_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    project_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at = mapped_column(DateTime, nullable=False)
+    updated_by: Mapped[int | None] = mapped_column(Integer)
+
+
 class User(UserMixin, Base):
     """A biscuits account, linked to the OpenProject user it acts as."""
 

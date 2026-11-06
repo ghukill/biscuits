@@ -53,6 +53,7 @@ class StubOP:
         self.deny_writes = None  # an HTTP status to answer writes with
         self.activities = []
         self.project_links = {}
+        self.extra_wps = []      # more elements for the /work_packages list
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -86,7 +87,7 @@ class StubOP:
                 sees = (lambda n: n in who["wps"]) if who else (lambda n: True)
                 admin = who is None or who.get("admin")
                 if path == "/work_packages":
-                    return self._send(collection(*[wp(n, n) for n in (1, 2) if sees(n)]))
+                    return self._send(collection(*[wp(n, n) for n in (1, 2) if sees(n)], *stub.extra_wps))
                 if path.startswith("/work_packages/"):
                     n = int(path.split("/")[2])
                     if not sees(n):
@@ -105,7 +106,7 @@ class StubOP:
                 if path == "/priorities":
                     return self._send(collection({"id": 1, "name": "Normal"}))
                 if path == "/types":
-                    return self._send(collection({"id": 1, "name": "Task"}))
+                    return self._send(collection({"id": 1, "name": "Task"}, {"id": 3, "name": "Summary task"}))
                 if path == "/users":
                     if not admin:
                         return self._send({"message": "forbidden"}, 403)

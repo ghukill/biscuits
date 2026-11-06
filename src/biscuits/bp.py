@@ -24,6 +24,8 @@ JSON API:
   GET  /api/assignees/<pid>  Who can be assigned in a project
   GET  /api/writes           Recent write-log entries (admins: everyone's; others: their own)
   POST /api/project/<id>/archive   Archive or unarchive (biscuits only, not sent to OP)
+  POST /api/project/<id>/sections  Add a section (gated by writes.py, like a task)
+  POST /api/project/<id>/sections/order  Set the section order (biscuits only, not sent to OP)
 
 Login and the account and admin APIs are in auth.py, which also gates every
 route here. Every OpenProject call here uses the signed-in person's own key.
@@ -34,7 +36,7 @@ import time
 from flask import Blueprint, Response, g, jsonify, render_template, request
 from flask_login import current_user
 
-from . import accounts, archive, client, opadmin, snapshot, writes
+from . import accounts, archive, client, opadmin, sections, snapshot, writes
 
 bp = Blueprint(
     "biscuits",
@@ -91,6 +93,7 @@ def _snapshot_response():
     if data is None:  # a concurrent first fetch failed
         return jsonify(error=error or "No data from OpenProject yet"), 502
     visible = {p["id"] for p in data["projects"]}
+    tasks = {r["id"] for r in data["work_packages"]}
     return jsonify(
         data=data,
         fetched_at=fetched_at,
@@ -98,6 +101,7 @@ def _snapshot_response():
         stale_error=error,
         writes=_gate_info(),
         archived_projects=[p for p in archive.ids() if p in visible],
+        section_order=[s for s in sections.order() if s in tasks],
         account={"username": current_user.username, "is_admin": current_user.is_admin},
     )
 
@@ -195,6 +199,36 @@ def api_archive(pid):
         return jsonify(ok=False, error="You don't have permission to archive this project."), 403
     archive.set_archived(pid, archived, by=current_user.id)
     return jsonify(ok=True, archived_projects=archive.ids())
+
+
+@bp.post("/api/project/<int:pid>/sections")
+def api_add_section(pid):
+    data, _, _ = snapshot.get(current_user.id, current_op())
+    type_id = next((t["id"] for t in (data or {}).get("types", []) if t["name"] == snapshot.SECTION_TYPE_NAME), None)
+    if type_id is None:
+        return jsonify(ok=False, error=f"OpenProject has no '{snapshot.SECTION_TYPE_NAME}' type"), 400
+    return _write(writes.create_section, pid, (request.get_json(silent=True) or {}).get("name"), type_id)
+
+
+@bp.post("/api/project/<int:pid>/sections/order")
+def api_section_order(pid):
+    ids = (request.get_json(silent=True) or {}).get("order")
+    if (not isinstance(ids, list) or not ids or not all(type(i) is int for i in ids)
+            or len(set(ids)) != len(ids)):
+        return jsonify(ok=False, error="order must be a list of section ids"), 400
+    # Nothing here reaches OpenProject, but the order is shared, so the write gate
+    # still decides: a project in preview mode stays as it is for everyone.
+    if not writes.writable(pid):
+        return jsonify(ok=False, error="This project isn't write-enabled, so its sections can't be reordered."), 409
+    data, _, _ = snapshot.get(current_user.id, current_op())
+    rows = {r["id"]: r for r in (data or {}).get("work_packages", [])}
+    picked = [rows.get(i) for i in ids]
+    if not all(r and r["section"] is not None and r["project_id"] == pid for r in picked):
+        return jsonify(ok=False, error="That list has something that isn't a section in this project. Try refreshing."), 400
+    if not current_user.is_admin and not all(r["can_edit"] for r in picked):
+        return jsonify(ok=False, error="You don't have permission to reorder these sections."), 403
+    sections.set_order(pid, ids, by=current_user.id)
+    return jsonify(ok=True)
 
 
 @bp.get("/api/assignees/<int:pid>")
