@@ -34,6 +34,13 @@ def wp(id=1, project=1, subject="A task", links=None):
     }
 
 
+def attachment(id=5, name="shot.png", ctype="image/png", size=4):
+    return {"_type": "Attachment", "id": id, "fileName": name, "fileSize": size, "contentType": ctype,
+            "createdAt": "2026-11-07T10:00:00Z",
+            "_links": {"author": {"href": "/api/v3/users/7", "title": "Pat"},
+                       "downloadLocation": {"href": f"/api/v3/attachments/{id}/content"}}}
+
+
 def collection(*els):
     return {"total": len(els), "_embedded": {"elements": list(els)}}
 
@@ -54,6 +61,11 @@ class StubOP:
         self.activities = []
         self.project_links = {}
         self.extra_wps = []      # more elements for the /work_packages list
+        self.wp_links = {}       # extra _links on a single work package (e.g. addAttachment)
+        self.wp_description = None
+        self.attachments = {}    # id -> (metadata, bytes); listed on every work package
+        self.uploads = []        # (path, raw multipart body, content type)
+        self.redirect_content = None  # send /content requests here instead
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -94,7 +106,30 @@ class StubOP:
                         return self._send({"message": "not found"}, 404)
                     if path.endswith("/activities"):
                         return self._send(collection(*stub.activities))
-                    return self._send(wp(n, project=n))  # WP n lives in project n
+                    if path.endswith("/attachments"):
+                        return self._send(collection(*[m for m, _ in stub.attachments.values()]))
+                    e = wp(n, project=n, links=stub.wp_links)  # WP n lives in project n
+                    if stub.wp_description:
+                        e["description"] = stub.wp_description
+                    return self._send(e)
+                if path.startswith("/attachments/"):
+                    n = int(path.split("/")[2])
+                    if n not in stub.attachments:
+                        return self._send({"message": "not found"}, 404)
+                    meta, data = stub.attachments[n]
+                    if not path.endswith("/content"):
+                        return self._send(meta)
+                    if stub.redirect_content:
+                        self.send_response(302)
+                        self.send_header("Location", stub.redirect_content)
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", meta["contentType"])
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    return self.wfile.write(data)
                 if path == "/projects":
                     return self._send(collection({"id": 1, "name": "P", "active": True}))
                 if path.startswith("/projects/") and path.endswith("/available_assignees"):
@@ -123,13 +158,20 @@ class StubOP:
 
             def _write(self):
                 n = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(n))
+                raw = self.rfile.read(n)
+                ctype = self.headers.get("Content-Type") or ""
+                multipart = ctype.startswith("multipart/form-data")
+                body = {"_multipart": len(raw)} if multipart else json.loads(raw)
                 stub.requests.append((self.command, self.path.removeprefix("/api/v3"), self._key()))
                 known, _ = self._person()
                 if not known:
                     return self._send({"message": "unauthorized"}, 401)
                 if stub.deny_writes:
                     return self._send({"message": "denied"}, stub.deny_writes)
+                if multipart:
+                    stub.uploads.append((self.path, raw, ctype))
+                    stub.writes.append((self.command, self.path, body))
+                    return self._send(attachment(77, "shot.png", "image/png", len(raw)), 201)
                 stub.writes.append((self.command, self.path, body))
                 if self.path.endswith("/users"):
                     return self._send({"_type": "User", "id": 50, "name": "New Person"})

@@ -117,6 +117,15 @@ they touch is in `[writes] projects` (a list of ids, or `"*"` for all). Otherwis
 they apply in the browser as a preview and vanish on reload. New configs start
 in preview. Every attempt is logged, and there is no delete operation in the code.
 
+The same gate covers **file uploads** in the task pane (the Add files button,
+dragging files onto the pane, or pasting an image). Each is up to 10 MB
+(`writes.MAX_UPLOAD`); OpenProject's own limit may be lower. The log records the
+file's name, type and size, never its contents. Files are shown through biscuits
+with the viewer's own key, so OpenProject decides who sees them. Only plain image
+types (PNG, JPEG, GIF, WebP, AVIF, BMP) open in the browser; everything else,
+including SVG, downloads. Nothing is cached on the server, and browsers may keep a
+private copy for five minutes.
+
 ```sh
 biscuits writes status    # is the gate open? what's been sent?
 biscuits writes log -n 50
@@ -141,10 +150,16 @@ nothing stops it from reading them, so check what you approve.
 ## The OpenProject MCP server
 
 `biscuits mcp` runs an [MCP](https://modelcontextprotocol.io/) server over stdio, so
-AI tools can read and change OpenProject tasks. It has 12 tools: `list_projects`,
+AI tools can read and change OpenProject tasks. It has 13 tools: `list_projects`,
 `search_work_packages`, `get_work_package`, `get_comments`, `create_work_package`,
-`update_work_package`, `add_comment`, `count_work_packages`, `list_statuses`,
-`list_types`, `list_priorities` and `list_users`. None of them deletes anything.
+`update_work_package`, `add_comment`, `add_attachment`, `count_work_packages`,
+`list_statuses`, `list_types`, `list_priorities` and `list_users`. None of them
+deletes anything.
+
+`add_attachment` uploads a local file (`file_path`) or base64 content
+(`content_base64` plus `file_name`), up to 10 MB, and returns a `markdown`
+snippet. Put that in a description or comment to show the file there, in both
+biscuits and OpenProject. `get_work_package` lists a task's attachments.
 
 It's independent of the web app. It uses only the standard library and doesn't read
 the biscuits config, so it runs without a config file and while the web server is
