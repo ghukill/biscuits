@@ -299,7 +299,7 @@ base_path = {json.dumps(base_path)}
 # Behind a reverse proxy, the proxy's address. Only then is X-Forwarded-Proto
 # believed, which is how biscuits knows the connection is HTTPS.
 # trusted_proxy = "127.0.0.1"
-# A name for this server, shown with the version in the sidebar, e.g. "dev @ 0.4.0".
+# A name for this server, shown with the version in the sidebar, e.g. "dev @ 0.5.0".
 # Applies without a restart.
 # environment = "prod"
 
