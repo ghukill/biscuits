@@ -502,6 +502,7 @@ table.log summary { cursor: pointer; color: var(--muted); font-size: .76rem; }
 .side-account a, .linkish { color: var(--muted); font: inherit; font-weight: 600; background: none; border: 0; padding: 0; cursor: pointer; }
 .side-account a:hover, .linkish:hover { color: var(--text); text-decoration: underline; }
 .side-account .side-me { color: var(--text); flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-build { margin-left: auto; color: var(--muted); opacity: .75; font-size: .72rem; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
 body.side-collapsed .side-account { display: none; }
 .https-note { background: var(--bg-2); color: var(--muted); font-size: .74rem; text-align: center; padding: .12rem .5rem; }
 body.auth-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; overflow: auto; }

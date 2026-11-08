@@ -9,6 +9,7 @@ settings would be the wrong way to fail.
 
 import json
 import os
+import re
 import secrets
 import stat
 import threading
@@ -21,6 +22,7 @@ from cryptography.fernet import Fernet
 DEFAULT_PATH = Path("~/.biscuits/config.toml")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9173
+_ENV_NAME = re.compile(r"[A-Za-z0-9_-]{1,20}")
 
 
 class ConfigError(RuntimeError):
@@ -46,6 +48,7 @@ class Config:
     secret_key: str | None
     encryption_key: str | None
     trusted_proxy: str | None
+    environment: str | None
     writes_mode: str
     write_projects: frozenset[int]
     write_all_projects: bool
@@ -179,6 +182,14 @@ def _parse(path: Path) -> Config:
     if trusted_proxy is not None and not (isinstance(trusted_proxy, str) and trusted_proxy):
         raise ConfigError(f"{path}: [server] trusted_proxy must be an address")
 
+    environment = server.get("environment")
+    if environment is not None and not (
+        isinstance(environment, str) and _ENV_NAME.fullmatch(environment)
+    ):
+        raise ConfigError(
+            f'{path}: [server] environment must be a short name like "dev" or "prod" '
+            "(letters, digits, - and _, up to 20)")
+
     data_dir = storage.get("data_dir", str(path.parent))
     if not isinstance(data_dir, str):
         raise ConfigError(f"{path}: [storage] data_dir must be a string")
@@ -191,6 +202,7 @@ def _parse(path: Path) -> Config:
         secret_key=secret_key,
         encryption_key=encryption_key,
         trusted_proxy=trusted_proxy,
+        environment=environment,
         writes_mode=mode,
         write_projects=frozenset(projects),
         write_all_projects=everything,
@@ -287,6 +299,9 @@ base_path = {json.dumps(base_path)}
 # Behind a reverse proxy, the proxy's address. Only then is X-Forwarded-Proto
 # believed, which is how biscuits knows the connection is HTTPS.
 # trusted_proxy = "127.0.0.1"
+# A name for this server, shown with the version in the sidebar, e.g. "dev @ 0.4.0".
+# Applies without a restart.
+# environment = "prod"
 
 {auth_section()}"""
 

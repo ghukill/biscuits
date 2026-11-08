@@ -20,6 +20,17 @@ def test_shell_routes_and_static_assets(web):
         assert web.get(path).status_code == 200, path
 
 
+def test_sidebar_shows_the_environment_and_version(write_config, web_as):
+    from biscuits import __version__
+    write_config()
+    web = web_as()
+    assert f'class="side-build"' in web.get("/").text
+    assert f">v{__version__}</span>" in web.get("/").text
+    # Naming the environment needs no restart.
+    write_config(extra='[server]\nenvironment = "dev"\n')
+    assert f">dev @ {__version__}</span>" in web.get("/").text
+
+
 def test_healthz_needs_nothing_from_openproject(write_config):
     write_config(url="http://127.0.0.1:9")
     assert create_app().test_client().get("/healthz").json["status"] == "ok"

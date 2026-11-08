@@ -73,6 +73,17 @@ def test_trusted_proxy_setting(write_config):
     assert config.load().trusted_proxy == "127.0.0.1"
 
 
+def test_environment_is_optional_and_must_be_a_short_name(write_config):
+    write_config()
+    assert config.load().environment is None
+    write_config(extra='[server]\nenvironment = "prod"\n')
+    assert config.load().environment == "prod"
+    for bad in ('""', '"has space"', '"<b>x</b>"', '"' + "x" * 21 + '"', "3"):
+        write_config(extra=f"[server]\nenvironment = {bad}\n")
+        with pytest.raises(config.ConfigError, match="environment"):
+            config.load()
+
+
 def test_a_bad_encryption_key_is_rejected(write_config):
     path = write_config()
     text = path.read_text()

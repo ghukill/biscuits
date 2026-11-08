@@ -25,6 +25,7 @@
       <a href="{{ url_for('biscuits.index') }}account" data-nav class="side-me" title="My account">{{ current_user.display_name }}</a>
       {% if current_user.is_admin %}<a href="{{ url_for('biscuits.index') }}admin" data-nav title="Manage accounts">Accounts</a>{% endif %}
       <button type="button" id="logout" class="linkish">Sign out</button>
+      <span class="side-build" title="Which biscuits server this is, and its version">{{ build_label }}</span>
     </div>
   </aside>
   <div class="main">

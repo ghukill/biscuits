@@ -41,6 +41,12 @@ def create_app() -> Flask:
     auth.login_manager.init_app(app)
     app.register_blueprint(bp, url_prefix=cfg.base_path or None)
 
+    @app.context_processor
+    def _build_label():
+        # Re-read per request, so renaming the environment needs no restart.
+        env = config.load().environment
+        return {"build_label": f"{env} @ {__version__}" if env else f"v{__version__}"}
+
     @app.get("/healthz")
     def healthz():
         return jsonify(status="ok", version=__version__)
