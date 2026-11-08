@@ -88,7 +88,9 @@ Use SSH on the VM only to run these commands. Don't read its config or data.
 
 ## 7. Afterwards
 
-- Run `curl -s https://franklab-biscuits.exe.xyz/healthz` as a check from outside.
+- `deploy_release`'s own `/healthz` check is the one that counts. The public URL sits
+  behind exe.dev's login, so `curl` from outside gets a redirect, not biscuits.
+- `ssh franklab-biscuits.exe.xyz 'tail -3 ~/.biscuits/deploys.log'` shows the result.
 - Comment on each task that went out: "Released in X.Y.Z, now on prod."
 - Planning docs: the Status row in the planning `README.md`, and the roadmap entry
   for each task.
