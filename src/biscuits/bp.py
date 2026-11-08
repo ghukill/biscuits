@@ -17,7 +17,10 @@ Any of them accept ?task=<id> to open the task detail pane.
 JSON API:
   GET  /api/snapshot         Everything the UI needs (cached, see snapshot.py)
   POST /api/refresh          Re-pull the snapshot (GETs only)
-  GET  /api/wp/<id>          Live detail: description + activity feed
+  GET  /api/wp/<id>          Live detail: description, attachments + activity feed
+  POST /api/wp/<id>/attachments  Upload a file (multipart "file"), gated like other writes
+  GET  /api/attachment/<id>  An attachment's contents, fetched with the person's key
+                             (images inline, everything else as a download)
   POST /api/wp/<id>          Update fields          } gated by writes.py:
   POST /api/wp/<id>/comment  Add a comment          } live only for allow-listed
   POST /api/wp               Create a task/subtask  } projects, else preview
@@ -31,9 +34,11 @@ Login and the account and admin APIs are in auth.py, which also gates every
 route here. Every OpenProject call here uses the signed-in person's own key.
 """
 
+import re
 import time
+import urllib.parse
 
-from flask import Blueprint, Response, g, jsonify, render_template, request
+from flask import Blueprint, Response, g, jsonify, render_template, request, url_for
 from flask_login import current_user
 
 from . import accounts, archive, client, opadmin, sections, snapshot, writes
@@ -132,12 +137,54 @@ def _activity(a, names):
     }
 
 
+# Shown in the browser as they are. Anything else (SVG included, since it can
+# carry script) is only ever offered as a download.
+INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
+
+
+def _attachment(a):
+    ctype = (a.get("contentType") or "").split(";")[0].strip().lower()
+    author = ((a.get("_links") or {}).get("author") or {})
+    return {
+        "id": a.get("id"),
+        "name": a.get("fileName"),
+        "size": a.get("fileSize"),
+        "content_type": ctype,
+        "is_image": ctype in INLINE_IMAGE_TYPES,
+        "created": a.get("createdAt"),
+        "author": author.get("title"),
+        "url": url_for("biscuits.api_attachment", att_id=a.get("id")),
+    }
+
+
+def _attachments(op, e):
+    """The work package's attachments: embedded when OP includes them, else fetched."""
+    emb = (e.get("_embedded") or {}).get("attachments")
+    if emb is not None:
+        return (emb.get("_embedded") or {}).get("elements", [])
+    if "attachments" not in (e.get("_links") or {}):
+        return []
+    return op.get_all(f"/work_packages/{e['id']}/attachments")
+
+
+def _local_images(html):
+    """Point OP's attachment links (src and href) in rendered markdown at biscuits'
+    own proxy, which fetches them with the signed-in person's key."""
+    if not html:
+        return html
+    op_url = re.escape(client.base_url())
+    proxy = url_for("biscuits.api_attachment", att_id=0)[:-1]
+    return re.sub(rf'(\s(?:src|href)=")(?:{op_url})?/api/v3/attachments/(\d+)/content(")',
+                  lambda m: f"{m.group(1)}{proxy}{m.group(2)}{m.group(3)}", html)
+
+
 @bp.get("/api/wp/<int:wp_id>")
 def api_wp(wp_id):
     op = current_op()
     try:
         e = op.get(f"/work_packages/{wp_id}")
         acts = op.get(f"/work_packages/{wp_id}/activities")
+        atts = _attachments(op, e)
     except client.OPError as err:
         if err.status in (403, 404):
             return jsonify(error="You don't have access to this task."), err.status
@@ -145,15 +192,77 @@ def api_wp(wp_id):
     data, _, _ = snapshot.get(current_user.id, op)
     names = {u["id"]: u["name"] for u in (data or {}).get("users", [])}
     row = snapshot.upsert(current_user.id, e)
-    emb = e.get("_embedded") or {}
+    description = dict(e.get("description") or {})
+    description["html"] = _local_images(description.get("html"))
+    activities = [_activity(a, names) for a in acts.get("_embedded", {}).get("elements", [])]
+    for a in activities:
+        a["comment_html"] = _local_images(a["comment_html"])
     return jsonify(
         row=row,
-        description=e.get("description") or {},
-        attachments=[{"name": a.get("fileName"), "size": a.get("fileSize")}
-                     for a in ((emb.get("attachments") or {}).get("_embedded") or {}).get("elements", [])],
-        activities=[_activity(a, names) for a in acts.get("_embedded", {}).get("elements", [])],
+        description=description,
+        attachments=[_attachment(a) for a in atts],
+        can_attach="addAttachment" in (e.get("_links") or {}),
+        max_upload=writes.MAX_UPLOAD,
+        activities=activities,
         live=writes.writable(row["project_id"]),
     )
+
+
+@bp.get("/api/attachment/<int:att_id>")
+def api_attachment(att_id):
+    """Stream one attachment from OP with the signed-in person's key, so OP decides
+    who may see it. Nothing is cached on the server; the browser may keep a private
+    copy for a few minutes. Only plain image types are shown inline."""
+    op = current_op()
+    try:
+        meta = op.get(f"/attachments/{att_id}")
+        href = ((meta.get("_links") or {}).get("downloadLocation") or {}).get("href")
+        upstream = op.download(href or f"/api/v3/attachments/{att_id}/content")
+    except client.OPError as err:
+        if err.status in (403, 404):
+            return jsonify(error="You don't have access to this file."), 404
+        raise
+    info = _attachment(meta)
+    inline = info["is_image"] and not request.args.get("download")
+    name = writes._file_name(info["name"])
+    quoted = urllib.parse.quote(name, safe="")
+    ascii_name = name.encode("ascii", "replace").decode().replace('"', "").replace("?", "_")
+
+    def chunks():
+        with upstream:
+            while block := upstream.read(64 * 1024):
+                yield block
+
+    resp = Response(chunks(), content_type=info["content_type"] if inline else "application/octet-stream")
+    resp.headers["Content-Disposition"] = (
+        f"{'inline' if inline else 'attachment'}; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}")
+    length = upstream.headers.get("Content-Length")
+    if length:
+        resp.headers["Content-Length"] = length
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
+@bp.post("/api/wp/<int:wp_id>/attachments")
+def api_attach(wp_id):
+    # Refuse an oversized upload before reading it. The allowance covers the
+    # multipart framing around the file.
+    request.max_content_length = writes.MAX_UPLOAD + 64 * 1024
+    f = request.files.get("file")
+    if f is None:
+        return jsonify(ok=False, error="No file was sent"), 400
+    data = f.read(writes.MAX_UPLOAD + 1)
+    try:
+        out = writes.attach(current_op(), wp_id, f.filename, f.mimetype, data)
+    except writes.WriteError as e:
+        if e.status == 401:
+            raise client.OPError(str(e), status=401) from e
+        return jsonify(ok=False, error=str(e)), e.status if 400 <= e.status < 600 else 400
+    res = out.get("result")
+    att = _attachment(res) if out["sent"] and isinstance(res, dict) and res.get("id") else None
+    return jsonify(ok=True, sent=out["sent"], reason=out["reason"], plan=out["plan"], attachment=att)
 
 
 def _write_response(out):

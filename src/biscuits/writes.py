@@ -32,6 +32,9 @@ _log_lock = threading.Lock()
 # Text fields are capped so a stray paste can't send megabytes to OP.
 MAX_SUBJECT = 255
 MAX_TEXT = 50_000
+# Uploads are capped too. OpenProject has its own limit (Administration →
+# Attachments), and refuses anything bigger with its own message.
+MAX_UPLOAD = 10 * 1024 * 1024
 
 
 class WriteError(RuntimeError):
@@ -90,11 +93,13 @@ def recent(n=100, user_id=None):
     return out
 
 
-def _send(op, method, path, body):
+def _send(op, method, path, body, raw=None):
+    """Send JSON `body`, or with raw=(bytes, content_type) send those bytes instead."""
+    data, ctype = raw if raw else (json.dumps(body).encode(), "application/json")
     req = urllib.request.Request(
-        f"{client.base_url()}/api/v3{path}", method=method, data=json.dumps(body).encode(),
+        f"{client.base_url()}/api/v3{path}", method=method, data=data,
         headers={"Authorization": client.auth_header(op.key),
-                 "Content-Type": "application/json", "Accept": "application/hal+json"},
+                 "Content-Type": ctype, "Accept": "application/hal+json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -109,7 +114,9 @@ def _send(op, method, path, body):
         raise WriteError(f"Couldn't reach OpenProject: {e.reason}", status=502) from e
 
 
-def _execute(conn, op, method, path, body, projects_touched, meta=None):
+def _execute(conn, op, method, path, body, projects_touched, meta=None, raw=None):
+    """Plan, gate, log and maybe send one write. With `raw`, the log and the
+    returned plan get `body` (a summary) while `raw` is what goes to OP."""
     g = gate()
     mode, allowed, everything = g
     touched = {p for p in projects_touched if p is not None}
@@ -125,7 +132,7 @@ def _execute(conn, op, method, path, body, projects_touched, meta=None):
     result = None
     if send:
         try:
-            result = _send(conn, method, path, body)
+            result = _send(conn, method, path, body, raw)
             entry["ok"] = True
         except WriteError as e:
             entry.update(ok=False, error=str(e))
@@ -266,6 +273,44 @@ def create(conn, fields):
         body["description"] = {"raw": str(fields["description"])[:MAX_TEXT]}
     return _execute(conn, "create", "POST", "/work_packages", body, {project_id},
                     {"parent": parent_id})
+
+
+def _file_name(name):
+    """A plain file name: no folders, no control characters, at most 255 characters."""
+    name = str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(ch for ch in name if ch.isprintable()).strip().lstrip(".")
+    return name[-MAX_SUBJECT:] or "file"
+
+
+def _multipart(fields):
+    """multipart/form-data from (name, filename_or_None, content_type, bytes) parts."""
+    boundary = "biscuits" + os.urandom(16).hex()
+    out = bytearray()
+    for name, filename, ctype, data in fields:
+        disp = f'form-data; name="{name}"'
+        if filename is not None:
+            disp += f'; filename="{filename.replace(chr(34), "")}"'
+        out += f"--{boundary}\r\nContent-Disposition: {disp}\r\nContent-Type: {ctype}\r\n\r\n".encode()
+        out += data + b"\r\n"
+    out += f"--{boundary}--\r\n".encode()
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
+def attach(conn, wp_id, file_name, content_type, data):
+    """Upload a file to a work package. Like every write, it's gated and logged
+    (name, size and type, never the contents), and there is no way to remove one."""
+    if not data:
+        raise WriteError("That file is empty")
+    if len(data) > MAX_UPLOAD:
+        raise WriteError(f"Files can be up to {MAX_UPLOAD // (1024 * 1024)} MB", status=413)
+    name = _file_name(file_name)
+    ctype = str(content_type or "").strip() or "application/octet-stream"
+    cur = _wp(conn, wp_id)
+    summary = {"fileName": name, "contentType": ctype, "size": len(data)}
+    raw = _multipart([("metadata", None, "application/json", json.dumps({"fileName": name}).encode()),
+                      ("file", name, ctype, data)])
+    return _execute(conn, "attach", "POST", f"/work_packages/{int(wp_id)}/attachments", summary,
+                    {_id(cur["_links"]["project"]["href"])}, {"wp": int(wp_id)}, raw=raw)
 
 
 def create_section(conn, project_id, name, type_id):

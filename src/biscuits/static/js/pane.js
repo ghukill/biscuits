@@ -3,7 +3,7 @@
 // Blocks re-render independently so typing in one never gets clobbered.
 
 import { $, esc, h, avatar, friendlyDate, shortDate, longDate, dueClass, hue, ago, safeHTML, ICON } from "./util.js";
-import { S, row, children, ancestors, update, toggleComplete, create, comment, detail, liveProject, isSection, sectionTitle } from "./store.js";
+import { S, row, children, ancestors, update, toggleComplete, create, comment, detail, attach, liveProject, isSection, sectionTitle } from "./store.js";
 import { toast, statusPill } from "./ui.js";
 import { pickFor, expanded, saveExpanded } from "./list.js";
 import { openTask, closeTask, href, go } from "./nav.js";
@@ -52,13 +52,14 @@ function skeleton() {
       <div class="p-titlewrap" data-b="title"></div>
       <div class="p-fields" data-b="fields"></div>
       <div class="p-sec" data-b="desc"></div>
+      <div class="p-sec" data-b="files"></div>
       <div class="p-sec" data-b="subtasks"></div>
       <div class="p-sec p-activity" data-b="activity"></div>
     </div>
     <div class="p-compose" data-b="compose"></div>`;
 }
 
-const BLOCKS = { top, banner, crumbs, title, fields, desc, subtasks, activity, compose };
+const BLOCKS = { top, banner, crumbs, title, fields, desc, files, subtasks, activity, compose };
 
 function paint() {
   const el = pane();
@@ -159,8 +160,94 @@ function desc(r) {
   if (r._description != null) body = `<div class="p-desc-raw">${esc(r._description) || ""}</div>`;
   else if (!c.at && !c.error) body = `<div class="muted shimmer">Loading…</div>`;
   else body = (c.description || {}).html ? `<div class="p-desc-html">${safeHTML(c.description.html)}</div>` : "";
-  return `<div class="p-h">Description</div><div class="p-desc" data-act="desc-edit" title="Click to edit">${body || `<span class="muted">What is this task about? Click to add details.</span>`}</div>
-    ${c.attachments && c.attachments.length ? `<div class="p-attach">${c.attachments.map((a) => `<span class="att">📎 ${esc(a.name)}</span>`).join("")} <span class="muted">(open in OpenProject to view)</span></div>` : ""}`;
+  return `<div class="p-h">Description</div><div class="p-desc" data-act="desc-edit" title="Click to edit">${body || `<span class="muted">What is this task about? Click to add details.</span>`}</div>`;
+}
+
+// ---------- attachments ----------
+function fileSize(n) {
+  if (n == null) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+// Uploads need a write-enabled project, a task OP knows about, and OP's own permission.
+function canAttach(r) {
+  const c = cache.get(r.id) || {};
+  return liveProject(r.project_id) && !r._local && c.can_attach !== false;
+}
+
+function files(r) {
+  const c = cache.get(r.id) || {};
+  if (!c.at) return "";
+  const atts = c.attachments || [];
+  const may = canAttach(r);
+  if (!atts.length && !may && !c.uploading) return "";
+  const images = atts.filter((a) => a.is_image);
+  const others = atts.filter((a) => !a.is_image);
+  return `<div class="p-h">Attachments ${atts.length ? `<span class="muted">${atts.length}</span>` : ""}
+      ${may ? `<span class="act-tabs"><button data-act="pick-files" type="button">+ Add files</button></span><input type="file" multiple hidden data-act="file-input">` : ""}</div>
+    ${images.length ? `<div class="att-grid">${images.map((a) => `<button type="button" class="att-thumb" data-act="enlarge" data-src="${esc(a.url)}" data-name="${esc(a.name)}" title="${esc(a.name)} · ${esc(fileSize(a.size))}"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></button>`).join("")}</div>` : ""}
+    ${others.length ? `<div class="p-attach">${others.map((a) => `<a class="att" href="${esc(a.url)}?download=1" download="${esc(a.name)}" title="Download">📎 ${esc(a.name)} <small class="muted">${esc(fileSize(a.size))}</small></a>`).join("")}</div>` : ""}
+    ${c.uploading ? `<div class="muted shimmer att-note">Uploading ${c.uploading} file${c.uploading > 1 ? "s" : ""}…</div>` : ""}
+    ${may && !c.uploading ? `<div class="att-drop muted">Drop files here, or paste an image, to attach it. Up to ${esc(fileSize(c.max_upload))} each.</div>` : ""}`;
+}
+
+// Clipboard images are all called "image.png"; give them a name worth keeping.
+function pastedName(f) {
+  if (f.name && f.name !== "image.png") return f.name;
+  const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg").replace(/[^a-z0-9]/g, "");
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  return `pasted-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+}
+
+// Markdown OP itself uses for an attachment, so it shows inside OP too.
+const attachmentMarkdown = (a) => `${a.is_image ? "!" : ""}[${a.name.replace(/[\[\]]/g, "")}](/api/v3/attachments/${a.id}/content)`;
+
+async function uploadFiles(list, insertInto = null) {
+  const id = paneId;
+  const r = row(id);
+  const c = cache.get(id);
+  if (!r || !c) return;
+  if (!canAttach(r)) {
+    toast(liveProject(r.project_id) ? "You don't have permission to add files to this task." : `“${r.project}” isn't write-enabled, so files can't be added here yet.`, { kind: "warn" });
+    return;
+  }
+  for (const f of list) {
+    const name = pastedName(f);
+    if (c.max_upload && f.size > c.max_upload) { toast(`“${name}” is too big: files can be up to ${fileSize(c.max_upload)}.`, { kind: "error" }); continue; }
+    c.uploading = (c.uploading || 0) + 1;
+    if (paneId === id) paint();
+    try {
+      const res = await attach(id, f, name);
+      if (!res.sent) toast(`“${name}” wasn't uploaded: ${res.reason}.`, { kind: "warn" });
+      else if (res.attachment) {
+        c.attachments = [...(c.attachments || []), res.attachment];
+        if (insertInto && insertInto.isConnected) {
+          insertInto.setRangeText(attachmentMarkdown(res.attachment), insertInto.selectionStart, insertInto.selectionEnd, "end");
+          insertInto.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        toast(`Attached “${res.attachment.name}”`);
+      }
+    } catch (e) {
+      toast(`Couldn't upload “${name}”: ${e.message}`, { kind: "error" });
+    } finally {
+      c.uploading -= 1;
+      if (paneId === id) paint();
+    }
+  }
+}
+
+function lightbox(src, name) {
+  const box = h(`<div class="lightbox" role="dialog" aria-label="${esc(name || "Image")}">
+      <img src="${esc(src)}" alt="${esc(name || "")}">
+      <div class="lb-bar"><span>${esc(name || "")}</span><a href="${esc(src.split("?")[0])}?download=1" class="btn sm ghost">Download</a><button class="btn sm ghost" type="button">Close</button></div>
+    </div>`);
+  const close = () => { box.remove(); window.removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  box.addEventListener("click", (e) => { if (!e.target.closest("a")) close(); });
+  window.addEventListener("keydown", onKey, true);
+  document.body.appendChild(box);
 }
 
 // Subtasks render as a collapsible tree (any depth), so the whole hierarchy
@@ -293,9 +380,13 @@ export function wirePane() {
     if (open) { e.preventDefault(); return openTask(+open.dataset.open); }
     const pick = t.closest(".f-val[data-pick]");
     if (pick && r) return pickFor(pick.dataset.pick, pick, r);
+    const img = t.closest(".p-desc-html img, .act-text img");
+    if (img) { e.preventDefault(); e.stopPropagation(); return lightbox(img.src, img.alt); }
     const act = t.closest("[data-act]");
     if (!act || !r) return;
     const a = act.dataset.act;
+    if (a === "enlarge") return lightbox(act.dataset.src, act.dataset.name);
+    if (a === "pick-files") return el.querySelector('[data-act="file-input"]').click();
     const st = t.closest(".st-row");
     if (a === "complete") return toggleComplete(r.id);
     if (a === "close") return closeTask();
@@ -327,6 +418,28 @@ export function wirePane() {
   el.addEventListener("click", (e) => {
     const st = e.target.closest(".st-row");
     if (st && !e.target.closest("[data-act]")) openTask(+st.dataset.id);
+  });
+  el.addEventListener("change", (e) => {
+    if (e.target.matches('[data-act="file-input"]')) { const fs = [...e.target.files]; e.target.value = ""; uploadFiles(fs); }
+  });
+  // Drag files onto the pane, or paste them, to attach them. Pasting into the
+  // description or comment box also puts a link to the file at the cursor.
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  let dragDepth = 0;
+  el.addEventListener("dragenter", (e) => { if (hasFiles(e)) { dragDepth++; el.classList.add("dropping"); } });
+  el.addEventListener("dragleave", (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; el.classList.remove("dropping"); } });
+  el.addEventListener("dragover", (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
+  el.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; el.classList.remove("dropping");
+    const box = e.target.closest(".p-desc-edit, .p-comment");
+    uploadFiles([...e.dataTransfer.files], box);
+  });
+  el.addEventListener("paste", (e) => {
+    const fs = [...((e.clipboardData && e.clipboardData.files) || [])];
+    if (!fs.length || !row(paneId)) return;
+    e.preventDefault();
+    uploadFiles(fs, e.target.closest(".p-desc-edit, .p-comment"));
   });
   el.addEventListener("input", (e) => {
     if (e.target.matches(".p-title, .p-comment, .p-desc-edit")) autosize(e.target);

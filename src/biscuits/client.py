@@ -38,6 +38,20 @@ def web_url(path=""):
     return base_url() + path
 
 
+class _KeepKeyHome(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but drop the key when one leaves OpenProject's host
+    (urllib would otherwise copy the Authorization header to wherever it goes)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl)[:2] != urllib.parse.urlsplit(req.full_url)[:2]:
+            new.remove_header("Authorization")
+        return new
+
+
+_download_opener = urllib.request.build_opener(_KeepKeyHome)
+
+
 class OP:
     def __init__(self, key, actor=None):
         if not key:
@@ -61,6 +75,25 @@ class OP:
             raise OPError(f"GET {path} -> HTTP {e.code}", status=e.code) from e
         except urllib.error.URLError as e:
             raise OPError(f"GET {path} -> {e.reason}") from e
+
+    def download(self, href, timeout=60):
+        """GET a file (an attachment's downloadLocation) and return the open response,
+        for the caller to stream and close.
+
+        The person's key only goes to OpenProject itself: a download location
+        elsewhere (e.g. a signed link to external storage) is fetched without it.
+        """
+        url = urllib.parse.urljoin(base_url() + "/", str(href))
+        op = urllib.parse.urlsplit(base_url())
+        own = urllib.parse.urlsplit(url)[:2] == op[:2]
+        req = urllib.request.Request(url, method="GET",
+                                     headers={"Authorization": auth_header(self.key)} if own else {})
+        try:
+            return _download_opener.open(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            raise OPError(f"GET {urllib.parse.urlsplit(url).path} -> HTTP {e.code}", status=e.code) from e
+        except urllib.error.URLError as e:
+            raise OPError(f"GET {urllib.parse.urlsplit(url).path} -> {e.reason}") from e
 
     def get_all(self, path, params=None, page_size=100):
         """Fetch every element of a collection.

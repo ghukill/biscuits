@@ -12,7 +12,9 @@ to the file named by OPENPROJECT_ENV_FILE (KEY=value lines).
 
 Stdout is the MCP JSON-RPC transport (newline-delimited); all diagnostics go to stderr.
 """
+import base64
 import json
+import mimetypes
 import os
 import re
 import sys
@@ -20,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-SERVER_INFO = {"name": "openproject-mcp", "version": "0.2.0"}
+SERVER_INFO = {"name": "openproject-mcp", "version": "0.3.0"}
 
 
 def load_creds():
@@ -74,6 +76,35 @@ def api(method, path, body=None, params=None):
         return {"_error": f"{method} {path} -> HTTP {e.code}", "detail": detail}
     except Exception as e:
         return {"_error": f"{method} {path} -> {e}"}
+
+
+def api_upload(path, file_name, content_type, data, params=None):
+    """POST a file as multipart/form-data (OpenProject's attachment upload)."""
+    boundary = "openproject-mcp-" + os.urandom(12).hex()
+    safe = file_name.replace('"', "")
+    body = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n"
+        f"Content-Type: application/json\r\n\r\n{json.dumps({'fileName': file_name})}\r\n"
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{safe}\"\r\n"
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    query = "?" + urllib.parse.urlencode(params) if params else ""
+    req = urllib.request.Request(
+        BASE + path + query, method="POST", data=body,
+        headers={"Authorization": AUTH, "Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read().decode()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode()[:500]
+        except Exception:
+            detail = ""
+        return {"_error": f"POST {path} -> HTTP {e.code}", "detail": detail}
+    except Exception as e:
+        return {"_error": f"POST {path} -> {e}"}
 
 
 def paged(path, params=None, limit=200):
@@ -170,7 +201,65 @@ def t_get_work_package(work_package_id):
     desc = e.get("description", {}) or {}
     out["description"] = desc.get("raw") or ""
     out["url"] = (OP_URL + "/work_packages/" + str(work_package_id))
+    atts = (e.get("_embedded") or {}).get("attachments")
+    if atts is not None:
+        els = (atts.get("_embedded") or {}).get("elements", [])
+    else:
+        els = paged(f"/work_packages/{work_package_id}/attachments")
+    out["attachments"] = [fmt_attachment(a) for a in els] if isinstance(els, list) else els
     return out
+
+
+def fmt_attachment(a):
+    return {
+        "id": a.get("id"),
+        "file_name": a.get("fileName"),
+        "size": a.get("fileSize"),
+        "content_type": a.get("contentType"),
+        "author": ((a.get("_links") or {}).get("author") or {}).get("title"),
+        "created_at": (a.get("createdAt") or "")[:19],
+        # Downloading needs an OpenProject login or API key.
+        "download_url": f"{BASE}/attachments/{a.get('id')}/content",
+        # Put this in a description or comment to show the file there.
+        "markdown": f"{'!' if str(a.get('contentType') or '').startswith('image/') else ''}"
+                    f"[{a.get('fileName')}](/api/v3/attachments/{a.get('id')}/content)",
+    }
+
+
+MAX_ATTACHMENT = 10 * 1024 * 1024  # like the web app; OpenProject has its own limit too
+
+
+def t_add_attachment(work_package_id, file_path=None, content_base64=None, file_name=None,
+                     content_type=None):
+    """Attach a local file (file_path) or base64 content to a work package."""
+    if bool(file_path) == bool(content_base64):
+        return {"_error": "give exactly one of file_path or content_base64"}
+    if file_path:
+        path = os.path.expanduser(file_path)
+        if not os.path.isfile(path):
+            return {"_error": f"no such file: {file_path}"}
+        if os.path.getsize(path) > MAX_ATTACHMENT:
+            return {"_error": f"file is over {MAX_ATTACHMENT // (1024 * 1024)} MB"}
+        with open(path, "rb") as f:
+            data = f.read()
+        file_name = file_name or os.path.basename(path)
+    else:
+        try:
+            data = base64.b64decode(content_base64, validate=True)
+        except ValueError:
+            return {"_error": "content_base64 isn't valid base64"}
+        if not file_name:
+            return {"_error": "file_name is required with content_base64"}
+    if not data:
+        return {"_error": "the file is empty"}
+    if len(data) > MAX_ATTACHMENT:
+        return {"_error": f"file is over {MAX_ATTACHMENT // (1024 * 1024)} MB"}
+    file_name = os.path.basename(str(file_name).replace("\\", "/")) or "file"
+    content_type = content_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+    e = api_upload(f"/work_packages/{work_package_id}/attachments", file_name, content_type, data)
+    if "_error" in e:
+        return e
+    return {"work_package_id": work_package_id, "attached": True, **fmt_attachment(e)}
 
 
 def _desc(text):
@@ -373,7 +462,7 @@ TOOLS = [
     },
     {
         "name": "get_work_package",
-        "description": "Get full details (incl. description) of one work package by id.",
+        "description": "Get full details (incl. description and attachments) of one work package by id.",
         "inputSchema": {"type": "object", "properties": {"work_package_id": {"type": "integer"}}, "required": ["work_package_id"]},
     },
     {
@@ -404,6 +493,20 @@ TOOLS = [
         "description": "Add a markdown comment/note to a work package.",
         "inputSchema": {"type": "object", "properties": {"work_package_id": {"type": "integer"}, "comment": {"type": "string"}},
                         "required": ["work_package_id", "comment"]},
+    },
+    {
+        "name": "add_attachment",
+        "description": ("Attach a file (e.g. a screenshot or mockup) to a work package. Give file_path "
+                        "(a local file) or content_base64 plus file_name. Max 10 MB. Returns the "
+                        "attachment's id and a `markdown` snippet that shows it inline when put in a "
+                        "description or comment. Attachments can't be removed through this server."),
+        "inputSchema": {"type": "object", "properties": {
+            "work_package_id": {"type": "integer"},
+            "file_path": {"type": "string", "description": "path to a local file to upload"},
+            "content_base64": {"type": "string", "description": "file contents, base64-encoded (instead of file_path)"},
+            "file_name": {"type": "string", "description": "name to give the file (default: file_path's name)"},
+            "content_type": {"type": "string", "description": "MIME type (default: guessed from the name)"}},
+            "required": ["work_package_id"]},
     },
     {
         "name": "count_work_packages",
@@ -446,6 +549,7 @@ DISPATCH.update({
     "create_work_package": lambda a: t_create_work_package(**a),
     "update_work_package": lambda a: t_update_work_package(**a),
     "add_comment": lambda a: t_add_comment(a["work_package_id"], a["comment"]),
+    "add_attachment": lambda a: t_add_attachment(**a),
     "count_work_packages": lambda a: t_count_work_packages(a.get("project_id")),
     "list_statuses": lambda a: t_list_statuses(),
     "list_priorities": lambda a: t_list_priorities(),

@@ -30,7 +30,9 @@ export const onChange = (fn) => listeners.add(fn);
 export const emit = (ev = {}) => listeners.forEach((fn) => fn(ev));
 
 async function api(path, opts = {}) {
-  const res = await fetch(BASE + path, { ...opts, headers: { ...(opts.body ? HDRS : { "X-Biscuits": "1" }), ...(opts.headers || {}) } });
+  // A FormData body sets its own multipart Content-Type.
+  const base = opts.body && !(opts.body instanceof FormData) ? HDRS : { "X-Biscuits": "1" };
+  const res = await fetch(BASE + path, { ...opts, headers: { ...base, ...(opts.headers || {}) } });
   let body = {};
   try { body = await res.json(); } catch (_) {}
   if (body.code === "login") {
@@ -318,6 +320,13 @@ export async function moveSection(pid, id, targetId) {
 }
 
 export const detail = (id) => api(`/api/wp/${id}`);
+
+// Upload one file to a task. Resolves to the server's answer: {sent, reason, attachment}.
+export async function attach(id, file, name) {
+  const fd = new FormData();
+  fd.append("file", file, name || file.name || "file");
+  return api(`/api/wp/${id}/attachments`, { method: "POST", body: fd });
+}
 export const writeLog = () => api("/api/writes");
 
 const trim = (s, n = 48) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
