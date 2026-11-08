@@ -83,18 +83,24 @@ def write_mcp_config(cfg: config.Config) -> Path:
     """Write the session's MCP config, which holds the key, privately.
 
     A file rather than a flag, so the key stays out of `ps`, and rather than the
-    environment, so it isn't handed to every command the session runs.
+    environment, so it isn't handed to every command the session runs. With
+    [agent] mcp_url, the session goes through that biscuits server; otherwise it
+    talks to OpenProject directly.
     """
     path = cfg.data_dir / "agent-mcp.json"
     cfg.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.fchmod(fd, 0o600)  # in case the file was already there
+    if cfg.agent.mcp_url:
+        # Through biscuits, as the account the token belongs to.
+        server = {"type": "http", "url": cfg.agent.mcp_url,
+                  "headers": {"Authorization": f"Bearer {cfg.agent.mcp_token}"}}
+    else:
+        # Not set up for that yet: straight to OpenProject, outside biscuits.
+        server = {"command": sys.executable, "args": ["-m", "biscuits", "mcp-direct"],
+                  "env": {"OPENPROJECT_URL": cfg.op_url, "OPENPROJECT_API_KEY": cfg.agent.token}}
     with os.fdopen(fd, "w") as f:
-        json.dump({"mcpServers": {"openproject": {
-            "command": sys.executable,
-            "args": ["-m", "biscuits", "mcp"],
-            "env": {"OPENPROJECT_URL": cfg.op_url, "OPENPROJECT_API_KEY": cfg.agent.token},
-        }}}, f)
+        json.dump({"mcpServers": {"openproject": server}}, f)
     return path
 
 

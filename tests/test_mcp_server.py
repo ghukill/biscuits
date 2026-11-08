@@ -187,7 +187,7 @@ def test_starts_and_lists_tools_with_no_credentials_or_biscuits_config(tmp_path)
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_projects", "arguments": {}}},
     ]
     run = subprocess.run(
-        [sys.executable, "-m", "biscuits", "mcp"],
+        [sys.executable, "-m", "biscuits", "mcp-direct"],
         input="".join(json.dumps(m) + "\n" for m in messages),
         capture_output=True, text=True, env=env, cwd=tmp_path, timeout=60,
     )

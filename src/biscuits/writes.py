@@ -160,6 +160,12 @@ def account_write(conn, op, method, path, body, logged_body):
     return result
 
 
+def _quiet(path, notify):
+    """OpenProject emails people about a change unless asked not to. The MCP tools
+    ask not to, as the old MCP server always did; the web app doesn't."""
+    return path if notify else path + "?notify=false"
+
+
 def _wp(conn, wp_id):
     try:
         return conn.get(f"/work_packages/{int(wp_id)}")
@@ -185,7 +191,7 @@ def _int_or_none(v, name):
         raise WriteError(f"{name} must be an id")
 
 
-def update(conn, wp_id, changes):
+def update(conn, wp_id, changes, notify=True):
     """PATCH a work package. `changes` uses biscuits field names."""
     cur = _wp(conn, wp_id)
     body = {"lockVersion": cur["lockVersion"]}
@@ -232,21 +238,21 @@ def update(conn, wp_id, changes):
         body["_links"] = links
     if len(body) == 1:
         raise WriteError("Nothing to change")
-    return _execute(conn, "update", "PATCH", f"/work_packages/{int(wp_id)}", body, touched,
+    return _execute(conn, "update", "PATCH", _quiet(f"/work_packages/{int(wp_id)}", notify), body, touched,
                     {"wp": int(wp_id), "subject_before": cur.get("subject")})
 
 
-def comment(conn, wp_id, text):
+def comment(conn, wp_id, text, notify=True):
     text = str(text or "").strip()
     if not text:
         raise WriteError("Comment is empty")
     cur = _wp(conn, wp_id)
     body = {"comment": {"raw": text[:MAX_TEXT]}}
-    return _execute(conn, "comment", "POST", f"/work_packages/{int(wp_id)}/activities", body,
+    return _execute(conn, "comment", "POST", _quiet(f"/work_packages/{int(wp_id)}/activities", notify), body,
                     {_id(cur["_links"]["project"]["href"])}, {"wp": int(wp_id)})
 
 
-def create(conn, fields):
+def create(conn, fields, notify=True):
     """Create a task (optionally as a sub-task). OP quirk: never send description null."""
     subject = str(fields.get("subject") or "").strip()
     if not subject:
@@ -264,14 +270,25 @@ def create(conn, fields):
     assignee = _int_or_none(fields.get("assignee_id"), "Assignee")
     if assignee:
         links["assignee"] = {"href": f"/api/v3/users/{assignee}"}
+    for field, link, collection, label in (("status_id", "status", "statuses", "Status"),
+                                           ("priority_id", "priority", "priorities", "Priority")):
+        v = _int_or_none(fields.get(field), label)
+        if v:
+            links[link] = {"href": f"/api/v3/{collection}/{v}"}
     body = {"subject": subject[:MAX_SUBJECT], "_links": links}
+    start = _date(fields.get("start"), "Start date")
     due = _date(fields.get("due"), "Due date")
+    if start and due and start > due:
+        raise WriteError("Start date is after the due date")
+    if start:
+        body["startDate"] = start
     if due:
         body["dueDate"] = due
-        body["ignoreNonWorkingDays"] = True  # keep the date as given, see update()
+    if start or due:
+        body["ignoreNonWorkingDays"] = True  # keep the dates as given, see update()
     if fields.get("description"):
         body["description"] = {"raw": str(fields["description"])[:MAX_TEXT]}
-    return _execute(conn, "create", "POST", "/work_packages", body, {project_id},
+    return _execute(conn, "create", "POST", _quiet("/work_packages", notify), body, {project_id},
                     {"parent": parent_id})
 
 
@@ -296,7 +313,7 @@ def _multipart(fields):
     return bytes(out), f"multipart/form-data; boundary={boundary}"
 
 
-def attach(conn, wp_id, file_name, content_type, data):
+def attach(conn, wp_id, file_name, content_type, data, notify=True):
     """Upload a file to a work package. Like every write, it's gated and logged
     (name, size and type, never the contents), and there is no way to remove one."""
     if not data:
@@ -309,7 +326,7 @@ def attach(conn, wp_id, file_name, content_type, data):
     summary = {"fileName": name, "contentType": ctype, "size": len(data)}
     raw = _multipart([("metadata", None, "application/json", json.dumps({"fileName": name}).encode()),
                       ("file", name, ctype, data)])
-    return _execute(conn, "attach", "POST", f"/work_packages/{int(wp_id)}/attachments", summary,
+    return _execute(conn, "attach", "POST", _quiet(f"/work_packages/{int(wp_id)}/attachments", notify), summary,
                     {_id(cur["_links"]["project"]["href"])}, {"wp": int(wp_id)}, raw=raw)
 
 

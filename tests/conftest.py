@@ -132,6 +132,8 @@ class StubOP:
                     return self.wfile.write(data)
                 if path == "/projects":
                     return self._send(collection({"id": 1, "name": "P", "active": True}))
+                if path.startswith("/projects/") and path.endswith("/work_packages"):
+                    return self._send(collection(*[wp(n, n) for n in (1, 2) if sees(n)]))
                 if path.startswith("/projects/") and path.endswith("/available_assignees"):
                     return self._send(collection({"_type": "User", "id": 7, "name": "Pat"}))
                 if path.startswith("/projects/"):

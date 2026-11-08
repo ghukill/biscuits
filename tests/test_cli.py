@@ -187,3 +187,35 @@ def test_port_in_use_fails_with_a_message(write_config):
         r = run("--config", path, "serve", "-d")
     assert r.exit_code == 1 and "exited during startup" in r.output
     assert "Can't listen" in config.load().log_file.read_text()
+
+
+def test_tokens_add_list_and_revoke(write_config, tmp_path):
+    write_config()
+    make_user("biscuits-agent", admin=False, op_user_id=16)
+    r = run("tokens", "add", "biscuits-agent", "--name", "mattermost")
+    assert r.exit_code == 0, r.output
+    token = r.output.strip().splitlines()[-1]
+    assert token.startswith("bsk_")
+
+    out = tmp_path / "agent.token"
+    r = run("tokens", "add", "biscuits-agent", "--name", "agent session", "--out", out)
+    assert r.exit_code == 0 and "bsk_" not in r.output
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600 and out.read_text().startswith("bsk_")
+
+    r = run("tokens", "list")
+    assert "mattermost" in r.output and "agent session" in r.output and "never used" in r.output
+    assert token not in r.output
+
+    r = run("tokens", "revoke", "1")
+    assert r.exit_code == 0 and "revoked" in r.output
+    assert "REVOKED" in run("tokens", "list").output
+
+
+def test_tokens_need_an_account_with_a_key(write_config):
+    write_config()
+    make_user("keyless", key=None, admin=False)
+    assert "No account called nobody" in run("tokens", "add", "nobody", "--name", "x").output
+    r = run("tokens", "add", "keyless", "--name", "x")
+    assert r.exit_code == 1 and "no OpenProject key" in r.output
+    r = run("tokens", "revoke", "99")
+    assert r.exit_code == 1 and "No such token" in r.output

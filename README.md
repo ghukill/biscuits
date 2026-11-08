@@ -110,8 +110,8 @@ By default, everything biscuits keeps lives next to the config file:
 | `config.toml` | Settings and secrets |
 | `snapshots/<account id>.json` | Each person's cached OpenProject data, so restarts show data immediately |
 | `write-log.jsonl` | Audit log of every edit, sent or not |
-| `biscuits.db` | Accounts (with encrypted keys) and archived projects. SQLite, migrated automatically |
-| `agent-mcp.json` | The `biscuits agent` session's connection settings, including its key |
+| `biscuits.db` | Accounts (with encrypted keys), API token hashes, archived projects and section order. SQLite, migrated automatically |
+| `agent-mcp.json` | The `biscuits agent` session's MCP settings, including its key or token |
 | `biscuits.log`, `biscuits.pid` | Background server log and lock |
 
 ## Writes
@@ -143,52 +143,112 @@ asks which to work on. You approve its work as it goes, and nothing runs unatten
 
 To set it up, create a non-admin OpenProject user, make it a member of the project,
 and add an `[agent]` section to the config (see `config.example.toml`). biscuits
-refuses a token that belongs to an OpenProject admin. The session's key is also
-written to `agent-mcp.json` in the data directory, mode 600. The session reaches
-OpenProject through `biscuits mcp`, below.
+refuses a token that belongs to an OpenProject admin. The session's MCP settings
+are written to `agent-mcp.json` in the data directory, mode 600, which keeps them
+out of `ps` and the session's environment.
+
+With `[agent] mcp_url` and `mcp_token`, the session reaches OpenProject through a
+biscuits server's MCP endpoint, below, as that token's account. Without them it
+uses `biscuits mcp-direct`, straight to OpenProject.
 
 The session runs as your own Unix user, so the agent's permissions are limited in
 OpenProject but not on this machine. It's told not to use other credentials, but
 nothing stops it from reading them, so check what you approve.
 
-## The OpenProject MCP server
+## MCP: how programs use biscuits
 
-`biscuits mcp` runs an [MCP](https://modelcontextprotocol.io/) server over stdio, so
-AI tools can read and change OpenProject tasks. It has 13 tools: `list_projects`,
-`search_work_packages`, `get_work_package`, `get_comments`, `create_work_package`,
-`update_work_package`, `add_comment`, `add_attachment`, `count_work_packages`,
-`list_statuses`, `list_types`, `list_priorities` and `list_users`. None of them
-deletes anything.
+Programs (agent sessions, the Mattermost bots, other Claude Code sessions) reach
+OpenProject **through biscuits**, over [MCP](https://modelcontextprotocol.io/), and
+not by calling OpenProject themselves. Each one signs in as a biscuits account, so:
 
-`add_attachment` uploads a local file (`file_path`) or base64 content
-(`content_base64` plus `file_name`), up to 10 MB, and returns a `markdown`
-snippet. Put that in a description or comment to show the file there, in both
-biscuits and OpenProject. `get_work_package` lists a task's attachments.
+- OpenProject sees that account's own key, and shows it as the author.
+- Its writes pass the `[writes]` gate and are in the write log, marked `"via": "mcp"`.
+- It knows biscuits' own data: archived projects and the order of sections.
 
-It's independent of the web app. It uses only the standard library and doesn't read
-the biscuits config, so it runs without a config file and while the web server is
-down. Credentials come from these environment variables:
+There are 14 tools: `list_projects`, `search_work_packages`, `get_work_package`,
+`get_comments`, `create_work_package`, `update_work_package`, `add_comment`,
+`add_attachment`, `count_work_packages`, `list_statuses`, `list_types`,
+`list_priorities`, `list_users` and `list_sections`. None of them deletes anything.
+The first 13 have the same names and arguments as the old standalone server, so
+existing skills keep working. What's new:
+
+- `list_projects` marks each project `archived` (in biscuits), and with
+  `active_only` (the default) leaves archived ones out.
+- `get_work_package` gives the task's `section`, if it's in one.
+- `list_sections` lists a project's sections in biscuits' order. To put a task in a
+  section, give the section's id as `parent_id`.
+- Comment authors are named even when the account's key can't see other users.
+- Writes don't email people (`notify=false`), as before.
+
+`add_attachment` takes `content_base64` plus `file_name`, up to 10 MB, and returns a
+`markdown` snippet to put in a description or comment. `file_path` works through the
+`biscuits mcp` client, which reads the file on your machine.
+
+### The endpoint
+
+The server answers MCP at `<base_path>/mcp` (Streamable HTTP, JSON replies, no
+sessions). Two checks come first:
+
+- **Where from:** only addresses in `[mcp] allow_from`, by default this machine and
+  the tailnet (`100.64.0.0/10`, `fd7a:115c:a1e3::/48`). Behind a public proxy
+  (`trusted_proxy`), the real client address is checked, so the public internet is
+  refused even with a good token.
+- **Who:** a biscuits API token, as `Authorization: Bearer bsk_...`. Bad tokens are
+  rate limited like bad passwords.
+
+```sh
+biscuits tokens add USERNAME --name mattermost [--out FILE]   # shown or written once
+biscuits tokens list
+biscuits tokens revoke ID
+```
+
+Only a hash of each token is kept. A token stops working when it's revoked or its
+account is disabled. The account needs an OpenProject key (`biscuits users
+set-key`). Bots share one account, linked to the "Biscuits Agent" OpenProject user:
+
+```sh
+biscuits users add biscuits-agent --name "Biscuits Agent" --op-user 16 --key-stdin < agent.key
+biscuits tokens add biscuits-agent --name mattermost --out ~/.biscuits/mattermost.token
+```
+
+An MCP client that speaks HTTP can use the endpoint directly. For Claude Code:
+
+```json
+"openproject": {"type": "http", "url": "http://your-biscuits-host:8000/mcp",
+                "headers": {"Authorization": "Bearer bsk_..."}}
+```
+
+### `biscuits mcp`: the stdio client
+
+For clients that can only start a local process. It passes each message to the
+endpoint and never talks to OpenProject. Standard library only, no config file.
 
 | Variable | What |
 |---|---|
-| `OPENPROJECT_URL`, `OPENPROJECT_API_KEY` | The server and key to use |
-| `OPENPROJECT_ENV_FILE` | A file of `KEY=value` lines, used for whichever of those two isn't set |
+| `BISCUITS_MCP_URL` | The endpoint, e.g. `http://your-biscuits-host:8000/mcp` |
+| `BISCUITS_MCP_TOKEN_FILE` | A file holding the token (better: keeps it out of the environment) |
+| `BISCUITS_MCP_TOKEN` | The token itself, if there's no file |
 
 ```json
 "openproject": {
   "command": "/home/you/.local/bin/biscuits",
   "args": ["mcp"],
-  "env": {"OPENPROJECT_ENV_FILE": "/path/to/openproject.env"}
+  "env": {"BISCUITS_MCP_URL": "http://your-biscuits-host:8000/mcp",
+          "BISCUITS_MCP_TOKEN_FILE": "/home/you/.biscuits/mattermost.token"}
 }
 ```
 
-Without credentials it still starts and lists its tools, and every tool call returns
-a "not configured" error.
+**For now**, `biscuits mcp` with no `BISCUITS_MCP_URL` but with `OPENPROJECT_*`
+variables set runs `biscuits mcp-direct`, and says so on stderr, so setups from
+before this keep working until they're switched over.
 
-**Its writes bypass the `[writes]` gate and the write log,** because it doesn't read
-the config. OpenProject's own permissions for the key are the only limit, and its
-history shows that key's user as the author. Give it a key with no more access than
-it needs.
+### `biscuits mcp-direct`: break glass
+
+The old standalone server: straight to OpenProject, for when biscuits is down. It
+**bypasses the `[writes]` gate and the write log**, and the key's own user is the
+author. Credentials come from `OPENPROJECT_URL` and `OPENPROJECT_API_KEY`, or a file
+of `KEY=value` lines named by `OPENPROJECT_ENV_FILE`. Without them it still starts
+and lists its tools, and every tool call returns a "not configured" error.
 
 ### OpenProject API findings
 
@@ -313,7 +373,11 @@ uv run biscuits --config ./dev/config.toml serve
 | `writes.py` | **The only web app code that sends non-GET requests**, behind the write gate |
 | `agent.py` | `biscuits agent`, the Claude Code session signed in as the agent account |
 | `build.py` | Which build is running: the release version, or how far past it |
-| `mcp_server.py` | `biscuits mcp`. Standalone: standard library only, no config, and its own writes outside the gate |
+| `mcp_http.py`, `mcp_tools.py` | The MCP endpoint at `/mcp`: token and address checks, and the tools, on `client.py` and `writes.py` |
+| `mcp_schema.py` | The tools' names and arguments, shared by both MCP servers |
+| `mcp_proxy.py` | `biscuits mcp`, the stdio client for the endpoint. Standard library only |
+| `mcp_server.py` | `biscuits mcp-direct`, break glass. Standalone: standard library only, no config, and its own writes outside the gate |
+| `tokens.py` | API tokens for MCP clients (hashes only) |
 | `snapshot.py` | Per-account snapshot caches, with Asana-section detection |
 | `db.py`, `migrations/` | biscuits' own SQLite database and its Alembic migrations |
 | `archive.py` | Archived projects (a biscuits flag; OpenProject isn't touched) |

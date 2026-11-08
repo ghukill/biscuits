@@ -80,6 +80,21 @@ class User(UserMixin, Base):
         return f"{self.id}:{self.session_version}"
 
 
+class ApiToken(Base):
+    """A token that lets a program act as a biscuits account over MCP. Only a
+    hash is kept; the token itself is shown once, when it's made. See tokens.py."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at = mapped_column(DateTime, nullable=False)
+    last_used_at = mapped_column(DateTime)
+    revoked_at = mapped_column(DateTime)
+
+
 def engine() -> Engine:
     path = config.load().db_file
     with _lock:

@@ -56,3 +56,14 @@ encryption_key = "a-fernet-key"
 # workdir = "/path/to/biscuits"
 # Planning docs kept outside the repo, if any. The session can read and edit them.
 # docs = "/path/to/planning/biscuits"
+# The biscuits MCP endpoint the session goes through, and a biscuits API token
+# for the agent's biscuits account (`biscuits tokens add`). Set both or neither.
+# Without them, the session talks to OpenProject directly (`biscuits mcp-direct`).
+# mcp_url = "http://your-biscuits-host:8000/mcp"
+# mcp_token = "bsk_..."
+
+# Optional. Programs use biscuits over MCP at <base_path>/mcp, each with an API
+# token (`biscuits tokens add`). They're only accepted from these addresses or
+# networks. The default is this machine and the tailnet (Tailscale's ranges):
+# [mcp]
+# allow_from = ["127.0.0.1/32", "::1/128", "100.64.0.0/10", "fd7a:115c:a1e3::/48"]
