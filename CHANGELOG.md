@@ -3,6 +3,26 @@
 Each release of biscuits, newest first. A release is the only thing that changes
 the version, and every release goes to prod. See "Releases" in `README.md`.
 
+## 0.6.0 (2026-11-08)
+
+- **Assistants and bots go through biscuits** (#3490, #3476). Programs such as the
+  Mattermost assistant and agent sessions now reach OpenProject through biscuits
+  instead of directly. Each one signs in as a biscuits account, so its changes
+  follow biscuits' write settings, appear in the write log, and show who really
+  made them. Only reachable from this machine and the tailnet for now.
+- **Assistants know about sections and archived projects** (#3490): a new
+  `list_sections` tool, the section a task is in, and archived projects left out
+  of the project list.
+
+Behind the scenes:
+
+- `biscuits tokens add/list/revoke` makes API tokens for programs; `biscuits mcp`
+  is now a small client for the server's `/mcp` endpoint, and the old direct
+  server is `biscuits mcp-direct`, for emergencies. New `[mcp]` and `[agent]
+  mcp_url`/`mcp_token_file` settings, and a new database table (#3490).
+- The release steps no longer try the public health check, which is behind
+  exe.dev's login (#3495).
+
 ## 0.5.0 (2026-11-08)
 
 - **Pictures and files on tasks** (#3494). Pictures show as previews you can
