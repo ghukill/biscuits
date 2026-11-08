@@ -189,6 +189,7 @@ def config_show():
     """Print the effective settings, with secrets masked."""
     cfg = _load()
     click.echo(f"config file:  {cfg.path}")
+    click.echo(f"environment:  {cfg.environment or 'not set'} (biscuits {__version__})")
     click.echo(f"openproject:  {cfg.op_url}")
     click.echo(f"admin token:  {'*' * 8}{cfg.op_admin_token[-4:] if len(cfg.op_admin_token) > 12 else ''}")
     click.echo(f"login keys:   {'set' if cfg.secret_key and cfg.encryption_key else 'MISSING'}")

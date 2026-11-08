@@ -28,6 +28,10 @@ base_path = "/"
 # believed, which is how biscuits knows the connection is HTTPS. Without it,
 # session cookies aren't marked Secure and the "isn't HTTPS" note stays up.
 # trusted_proxy = "127.0.0.1"
+# A name for this server, shown with the version in the sidebar, e.g. "dev @ 0.4.0",
+# so it's obvious which one you're on. Without it, the sidebar shows just the version.
+# Applies without a restart.
+# environment = "prod"
 
 [auth]
 # `biscuits config init` and `biscuits config add-auth-keys` generate these.
