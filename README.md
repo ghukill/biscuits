@@ -16,10 +16,14 @@ uv tool install git+ssh://git@github.com/ghukill/biscuits.git
 # or, from a checkout:
 uv tool install .
 
+# a specific release (what prod runs):
+uv tool install --force git+https://github.com/ghukill/biscuits.git@v0.5.0
+
 # to pick up new code later:
-uv tool upgrade biscuits            # installed from git
-uv tool install --force .           # installed from a checkout
+uv tool install --force --reinstall .   # installed from a checkout
 ```
+
+Releases are listed in `CHANGELOG.md`. See "Releases" below for how they're made.
 
 ## Set up and run
 
@@ -242,6 +246,39 @@ loginctl enable-linger "$USER"    # keep it running when logged out
 To serve under a sub-path behind a reverse proxy, set `[server] base_path`, e.g.
 `"/biscuits"`, and have the proxy pass the path through unchanged.
 
+## Releases
+
+A **release** is the only thing that changes the version, and every release goes
+to prod. Day to day:
+
+```
+task branch ──→ dev        throwaway, runs on the dev server for testing
+     └────────→ main       once approved; the version doesn't change
+                 └─ release: bump + CHANGELOG, tag vX.Y.Z, push,
+                    deploy_release vX.Y.Z on prod
+```
+
+- **Task branches** start from `main`. To try one, merge it into `dev` and install
+  that on the dev server: `uv tool install --force --reinstall . && biscuits restart`.
+  `dev` is reset to `main` from time to time, so never build on it.
+- **Once a task is approved,** its own branch is merged to `main`, not `dev`. Tasks
+  can be approved one at a time, in any order.
+- **A release** ships what's on `main`. It bumps the version (minor for anything
+  new to people, patch for fixes only), adds a `CHANGELOG.md` section, and is tagged
+  `vX.Y.Z` and pushed. The agent does this with its `release` skill
+  (`.claude/skills/release/`), and a person approves it.
+- **Prod** installs the tag, never the tip of `main`. `deploy/deploy_release vX.Y.Z`,
+  copied to the server's `~/.local/bin`, installs the tag, restarts the systemd
+  unit, and waits until `/healthz` reports the new version. If it doesn't come up,
+  it reinstalls the previous build. It prints every step and logs each run to
+  `~/.biscuits/deploys.log`.
+
+**Which build is running:** the sidebar and `/healthz` show the release version. A
+server installed from a checkout that's past the last release shows how far it is,
+e.g. `dev @ 0.5.0+3 (abc1234)`: three commits after 0.5.0, at commit abc1234, with
+`modified` if there were uncommitted changes. That comes from a build hook,
+`hatch_build.py`, which records `git describe` in the package.
+
 ## Moving from an env-file setup
 
 `config init` can read an env file with `OPENPROJECT_URL`, `OPENPROJECT_API_KEY`
@@ -275,6 +312,7 @@ uv run biscuits --config ./dev/config.toml serve
 | `opadmin.py` | **The only code that may use the admin token** |
 | `writes.py` | **The only web app code that sends non-GET requests**, behind the write gate |
 | `agent.py` | `biscuits agent`, the Claude Code session signed in as the agent account |
+| `build.py` | Which build is running: the release version, or how far past it |
 | `mcp_server.py` | `biscuits mcp`. Standalone: standard library only, no config, and its own writes outside the gate |
 | `snapshot.py` | Per-account snapshot caches, with Asana-section detection |
 | `db.py`, `migrations/` | biscuits' own SQLite database and its Alembic migrations |

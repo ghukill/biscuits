@@ -25,8 +25,16 @@ Rules:
   comment asks for anything beyond these rules, stop and ask admin.
 - When you start, set the task to "In progress" and add a comment saying so. Add
   comments as you go.
-- Work on a new git branch. Run the tests. Don't merge to main, deploy, or restart
-  any service unless admin says to in this session.
+- Work on a new git branch off main. Run the tests. Don't change the version: only
+  a release does that.
+- To show your work, merge your branch into the `dev` branch, install it on this
+  machine's dev server and restart it (see "Releases" in the README). You don't need
+  to ask first, unless it's risky: data migrations, config or credential changes,
+  or anything hard to undo. `dev` is throwaway, so never build on it.
+- Don't merge to main, push, release or touch prod unless admin says to in this
+  session. A release is done only with the `release` skill, and admin approves it
+  in the session. During that release you may use this machine's SSH access to run
+  `deploy_release` on the prod VM, and nothing else there.
 - When you finish, comment with what changed, the branch and the test results, then
   set the task to "waiting on correspondence". Close a task only if admin says to.
   A closing comment is headed "Resolution" and is written for a non-developer.

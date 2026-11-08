@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# deploy_release: install a tagged biscuits release on this server, restart it,
+# and wait until it's up. If it doesn't come up, put the previous build back.
+#
+#   deploy_release v0.5.0
+#
+# It lives on the prod VM in ~/.local/bin. Its source is deploy/deploy_release in
+# the biscuits repo, and the release skill keeps the two in step. It prints every
+# step, and returns only when the deploy has worked (exit 0) or been rolled back
+# (exit 1). Each run adds a line to ~/.biscuits/deploys.log.
+#
+# Settings, if the defaults don't fit: BISCUITS_REPO, BISCUITS_UNIT (systemd user
+# unit), BISCUITS_HEALTHZ (URL), BISCUITS_DEPLOY_LOG, BISCUITS_WAIT (seconds).
+set -euo pipefail
+
+REPO="${BISCUITS_REPO:-https://github.com/ghukill/biscuits.git}"
+UNIT="${BISCUITS_UNIT:-biscuits}"
+HEALTHZ="${BISCUITS_HEALTHZ:-http://127.0.0.1:8000/healthz}"
+LOG="${BISCUITS_DEPLOY_LOG:-$HOME/.biscuits/deploys.log}"
+WAIT="${BISCUITS_WAIT:-60}"
+TOOL_PY="$HOME/.local/share/uv/tools/biscuits/bin/python"
+# `ssh host cmd` gets no login session, so point systemctl at the user manager.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+
+step() { printf '==> %s\n' "$*"; }
+fail() { printf '!!! %s\n' "$*" >&2; }
+
+tag="${1:-}"
+if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "usage: deploy_release vX.Y.Z" >&2
+  exit 2
+fi
+want="${tag#v}"
+
+running_version() {
+  curl -fsS --max-time 3 "$HEALTHZ" 2>/dev/null \
+    | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p'
+}
+
+installed_commit() {
+  # The commit uv installed from, recorded in the package's direct_url.json.
+  "$TOOL_PY" - <<'PY' 2>/dev/null || true
+import importlib.metadata, json
+d = json.loads(importlib.metadata.distribution("biscuits").read_text("direct_url.json") or "{}")
+print(d.get("vcs_info", {}).get("commit_id", ""))
+PY
+}
+
+wait_for() {  # wait_for VERSION: is that version answering /healthz?
+  local deadline=$((SECONDS + WAIT)) got=""
+  while ((SECONDS < deadline)); do
+    got="$(running_version)"
+    if [[ "$got" == "$1" ]]; then return 0; fi
+    sleep 1
+  done
+  fail "after ${WAIT}s, /healthz reports '${got:-nothing}', not $1"
+  return 1
+}
+
+record() { mkdir -p "$(dirname "$LOG")"; printf '%s %s -> %s %s\n' "$(date -Is)" "$1" "$tag" "$2" >>"$LOG"; }
+
+before="$(running_version)"
+before_commit="$(installed_commit)"
+step "Deploying biscuits $tag on $(hostname). Running now: ${before:-unknown} (commit ${before_commit:-unknown})."
+
+step "Checking that $tag exists on GitHub"
+if ! git ls-remote --exit-code --tags "$REPO" "refs/tags/$tag" >/dev/null; then
+  fail "no tag $tag in $REPO. Nothing changed."
+  record "${before:-unknown}" "refused (no such tag)"
+  exit 1
+fi
+
+step "Installing git+$REPO@$tag"
+if uv tool install --force --reinstall "git+$REPO@$tag" \
+   && step "Restarting $UNIT" && systemctl --user restart "$UNIT" \
+   && step "Waiting for $want on $HEALTHZ" && wait_for "$want"; then
+  step "Done: biscuits $want is up. $(curl -fsS --max-time 3 "$HEALTHZ")"
+  record "${before:-unknown}" ok
+  exit 0
+fi
+
+fail "The deploy didn't come up. Recent log:"
+journalctl --user -u "$UNIT" -n 20 --no-pager >&2 || true
+if [[ -z "$before_commit" ]]; then
+  fail "Can't tell which commit was installed before, so there's nothing to roll back to. Fix by hand."
+  record "${before:-unknown}" "FAILED, no rollback"
+  exit 1
+fi
+step "Rolling back to commit $before_commit"
+uv tool install --force --reinstall "git+$REPO@$before_commit"
+systemctl --user restart "$UNIT"
+if wait_for "$before"; then
+  step "Rolled back: ${before} is up again."
+  record "${before}" "FAILED, rolled back"
+else
+  fail "The rollback didn't come up either. Fix by hand."
+  record "${before:-unknown}" "FAILED, rollback failed"
+fi
+exit 1

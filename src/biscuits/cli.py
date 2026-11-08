@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, accounts, agent, client, config, daemon, opadmin, writes
+from . import __version__, accounts, agent, build, client, config, daemon, opadmin, writes
 
 
 def _load() -> config.Config:
@@ -189,7 +189,7 @@ def config_show():
     """Print the effective settings, with secrets masked."""
     cfg = _load()
     click.echo(f"config file:  {cfg.path}")
-    click.echo(f"environment:  {cfg.environment or 'not set'} (biscuits {__version__})")
+    click.echo(f"environment:  {cfg.environment or 'not set'} (biscuits {build.version_label()})")
     click.echo(f"openproject:  {cfg.op_url}")
     click.echo(f"admin token:  {'*' * 8}{cfg.op_admin_token[-4:] if len(cfg.op_admin_token) > 12 else ''}")
     click.echo(f"login keys:   {'set' if cfg.secret_key and cfg.encryption_key else 'MISSING'}")
