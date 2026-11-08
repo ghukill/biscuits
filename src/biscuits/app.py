@@ -5,7 +5,7 @@ from datetime import timedelta
 from flask import Flask, jsonify, redirect, request
 from flask.sessions import SecureCookieSessionInterface
 
-from . import __version__, auth, client, config
+from . import __version__, auth, build, client, config
 from .bp import NoKey, bp
 
 SESSION_DAYS = 14
@@ -45,11 +45,13 @@ def create_app() -> Flask:
     def _build_label():
         # Re-read per request, so renaming the environment needs no restart.
         env = config.load().environment
-        return {"build_label": f"{env} @ {__version__}" if env else f"v{__version__}"}
+        v = build.version_label()
+        return {"build_label": f"{env} @ {v}" if env else f"v{v}"}
 
     @app.get("/healthz")
     def healthz():
-        return jsonify(status="ok", version=__version__)
+        # `version` is the release version, which deploy_release checks.
+        return jsonify(status="ok", version=__version__, build=build.version_label())
 
     if cfg.base_path:
         @app.get("/")

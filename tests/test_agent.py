@@ -111,3 +111,12 @@ def test_docs_folder_is_optional(write_config, op, tmp_path, launched):
     argv = launched[0]
     assert "--add-dir" not in argv
     assert "Planning docs" not in argv[argv.index("--append-system-prompt") + 1]
+
+
+def test_the_rules_cover_dev_deploys_and_releases():
+    from biscuits.agent import _ROLE
+    role = " ".join(_ROLE.split())
+    assert "Don't change the version: only a release does that." in role
+    assert "merge your branch into the `dev` branch" in role
+    assert "Don't merge to main, push, release or touch prod unless admin says to in this session." in role
+    assert "`release` skill" in role
