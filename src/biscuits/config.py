@@ -7,6 +7,7 @@ last good copy: if someone was trying to turn writes off, keeping the old
 settings would be the wrong way to fail.
 """
 
+import ipaddress
 import json
 import os
 import re
@@ -23,6 +24,9 @@ DEFAULT_PATH = Path("~/.biscuits/config.toml")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9173
 _ENV_NAME = re.compile(r"[A-Za-z0-9_-]{1,20}")
+# Where MCP clients may connect from by default: this machine and the tailnet
+# (Tailscale's IPv4 and IPv6 ranges). Not the public internet, even with a token.
+DEFAULT_MCP_ALLOW = ("127.0.0.1/32", "::1/128", "100.64.0.0/10", "fd7a:115c:a1e3::/48")
 
 
 class ConfigError(RuntimeError):
@@ -37,6 +41,11 @@ class AgentConfig:
     project: int
     workdir: Path | None
     docs: Path | None
+    # The biscuits MCP endpoint the session uses, and a file holding a biscuits API
+    # token for it. Without them the session talks to OpenProject directly
+    # (`biscuits mcp-direct`).
+    mcp_url: str | None = None
+    mcp_token_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +66,7 @@ class Config:
     base_path: str
     data_dir: Path
     agent: AgentConfig | None = None
+    mcp_allow_from: tuple = ()
 
     @property
     def db_file(self) -> Path:
@@ -212,7 +222,19 @@ def _parse(path: Path) -> Config:
         # A relative data_dir means relative to the config file.
         data_dir=path.parent / Path(data_dir).expanduser(),
         agent=_parse_agent(raw, path),
+        mcp_allow_from=_parse_mcp(raw, path),
     )
+
+
+def _parse_mcp(raw: dict, path: Path) -> tuple:
+    mcp = _table(raw, "mcp")
+    allow = mcp.get("allow_from", list(DEFAULT_MCP_ALLOW))
+    if not isinstance(allow, list) or not all(isinstance(a, str) for a in allow):
+        raise ConfigError(f"{path}: [mcp] allow_from must be a list of addresses or networks")
+    try:
+        return tuple(ipaddress.ip_network(a.strip(), strict=False) for a in allow)
+    except ValueError as e:
+        raise ConfigError(f"{path}: [mcp] allow_from: {e}") from e
 
 
 def _parse_agent(raw: dict, path: Path) -> AgentConfig | None:
@@ -230,11 +252,20 @@ def _parse_agent(raw: dict, path: Path) -> AgentConfig | None:
         raise ConfigError(f"{path}: [agent] workdir must be a path")
     if docs is not None and not (isinstance(docs, str) and docs):
         raise ConfigError(f"{path}: [agent] docs must be a path")
+    mcp_url, token_file = agent.get("mcp_url"), agent.get("mcp_token_file")
+    if mcp_url is not None and not (isinstance(mcp_url, str) and mcp_url.startswith(("http://", "https://"))):
+        raise ConfigError(f"{path}: [agent] mcp_url must start with http:// or https://")
+    if token_file is not None and not (isinstance(token_file, str) and token_file.strip()):
+        raise ConfigError(f"{path}: [agent] mcp_token_file must be a path")
+    if bool(mcp_url) != bool(token_file):
+        raise ConfigError(f"{path}: [agent] mcp_url and mcp_token_file go together: set both or neither")
     return AgentConfig(
         token=token.strip(),
         project=project,
         workdir=Path(workdir).expanduser() if workdir else None,
         docs=Path(docs).expanduser() if docs else None,
+        mcp_url=mcp_url.rstrip("/") if mcp_url else None,
+        mcp_token_file=Path(token_file.strip()).expanduser() if token_file else None,
     )
 
 

@@ -7,6 +7,7 @@ from flask.sessions import SecureCookieSessionInterface
 
 from . import __version__, auth, build, client, config
 from .bp import NoKey, bp
+from .mcp_http import mcp_bp
 
 SESSION_DAYS = 14
 
@@ -40,6 +41,8 @@ def create_app() -> Flask:
     )
     auth.login_manager.init_app(app)
     app.register_blueprint(bp, url_prefix=cfg.base_path or None)
+    # MCP for programs, with its own token check instead of the login session.
+    app.register_blueprint(mcp_bp, url_prefix=cfg.base_path or None)
 
     @app.context_processor
     def _build_label():

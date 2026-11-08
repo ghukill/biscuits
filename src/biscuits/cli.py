@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, accounts, agent, build, client, config, daemon, opadmin, writes
+from . import __version__, accounts, agent, build, client, config, daemon, opadmin, tokens, writes
 
 
 def _load() -> config.Config:
@@ -35,7 +35,8 @@ class _Group(click.Group):
     def invoke(self, ctx):
         try:
             return super().invoke(ctx)
-        except (config.ConfigError, daemon.DaemonError, client.OPError, accounts.AccountError) as e:
+        except (config.ConfigError, daemon.DaemonError, client.OPError, accounts.AccountError,
+                tokens.TokenError) as e:
             raise click.ClickException(str(e)) from e
 
 
@@ -265,15 +266,87 @@ def agent_session():
 
 @main.command("mcp")
 def mcp_stdio():
-    """Run the OpenProject MCP server over stdio.
+    """Run an MCP server over stdio that passes everything to a biscuits server.
 
-    Needs no config file or running web server. Credentials come from
-    $OPENPROJECT_URL and $OPENPROJECT_API_KEY, then the file named by
-    $OPENPROJECT_ENV_FILE.
+    Needs no config file. Set $BISCUITS_MCP_URL to the server's /mcp endpoint, and
+    $BISCUITS_MCP_TOKEN_FILE to a file holding a biscuits API token (see
+    `biscuits tokens add`).
+
+    For now, with no $BISCUITS_MCP_URL but OpenProject credentials in the
+    environment, it runs `biscuits mcp-direct` instead and says so, so existing
+    setups keep working until they're switched over.
+    """
+    if not os.environ.get("BISCUITS_MCP_URL") and any(
+            os.environ.get(v) for v in ("OPENPROJECT_URL", "OPENPROJECT_API_KEY", "OPENPROJECT_ENV_FILE")):
+        sys.stderr.write("biscuits mcp: no BISCUITS_MCP_URL, but OpenProject credentials are set, so this is "
+                         "talking to OpenProject directly, outside biscuits. Switch to BISCUITS_MCP_URL, "
+                         "or use `biscuits mcp-direct` to mean it.\n")
+        from . import mcp_server  # reads the credentials on import, so only load it here
+
+        return mcp_server.main()
+    from . import mcp_proxy
+
+    mcp_proxy.main()
+
+
+@main.command("mcp-direct")
+def mcp_direct():
+    """Break glass: an MCP server over stdio that talks to OpenProject directly.
+
+    Bypasses biscuits entirely: no [writes] gate, no write log, and the key's own
+    OpenProject user as the author. Use `biscuits mcp` normally. Credentials come
+    from $OPENPROJECT_URL and $OPENPROJECT_API_KEY, then the file named by
+    $OPENPROJECT_ENV_FILE. Needs no config file or running web server.
     """
     from . import mcp_server  # reads the credentials on import, so only load it here
 
     mcp_server.main()
+
+
+# ---------- API tokens ----------
+
+@main.group("tokens")
+def tokens_group():
+    """API tokens, for programs that use biscuits' MCP endpoint as an account."""
+
+
+@tokens_group.command("add")
+@click.argument("username")
+@click.option("--name", required=True, help='What the token is for, e.g. "mattermost".')
+@click.option("--out", "out_file", type=click.Path(dir_okay=False, writable=True),
+              help="Write the token to this file (mode 600) instead of printing it.")
+def tokens_add(username, name, out_file):
+    """Make a token that acts as USERNAME. It's shown (or written) only once."""
+    user = _need_user(username)
+    if not accounts.get_key(user):
+        raise click.ClickException(f"{username} has no OpenProject key yet. Set one with `biscuits users set-key`.")
+    row, token = tokens.create(user.id, name)
+    if out_file:
+        fd = os.open(out_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(token + "\n")
+        click.echo(f"Token #{row.id} for {user.username} written to {out_file}")
+    else:
+        click.echo(f"Token #{row.id} for {user.username} ({name}). It won't be shown again:")
+        click.echo(token)
+
+
+@tokens_group.command("list")
+def tokens_list():
+    """List tokens (never the tokens themselves)."""
+    for row, username in tokens.all_tokens():
+        used = row.last_used_at.strftime("%Y-%m-%d %H:%M") if row.last_used_at else "never used"
+        state = "REVOKED" if row.revoked_at else used
+        click.echo(f"#{row.id:<4} {username:<24} {row.name:<24} {state}")
+
+
+@tokens_group.command("revoke")
+@click.argument("token_id", type=int)
+def tokens_revoke(token_id):
+    """Stop a token working, at once."""
+    row = tokens.revoke(token_id)
+    click.echo(f"Token #{row.id} ({row.name}) is revoked.")
 
 
 # ---------- admin ----------

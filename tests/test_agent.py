@@ -46,7 +46,7 @@ def test_session_is_signed_in_as_the_agent_and_lists_its_tasks(write_config, op,
     mcp = argv[argv.index("--mcp-config") + 1]
     assert stat.S_IMODE(os.stat(mcp).st_mode) == 0o600
     server = json.load(open(mcp))["mcpServers"]["openproject"]
-    assert server["command"] == sys.executable and server["args"] == ["-m", "biscuits", "mcp"]
+    assert server["command"] == sys.executable and server["args"] == ["-m", "biscuits", "mcp-direct"]
     assert server["env"]["OPENPROJECT_API_KEY"] == KEY
     assert {key for _, _, key in op.requests} == {KEY}  # never the admin token
     assert path.exists()
@@ -57,7 +57,7 @@ def test_an_old_mcp_server_setting_is_ignored(write_config, op, tmp_path, launch
     write_config(extra=section(tmp_path) + 'mcp_server = "/no/such/server.py"\n')
     assert run().exit_code == 0
     mcp = launched[0][launched[0].index("--mcp-config") + 1]
-    assert json.load(open(mcp))["mcpServers"]["openproject"]["args"] == ["-m", "biscuits", "mcp"]
+    assert json.load(open(mcp))["mcpServers"]["openproject"]["args"] == ["-m", "biscuits", "mcp-direct"]
 
 
 def test_refuses_an_openproject_admin_token(write_config, op, tmp_path, launched):
@@ -120,3 +120,40 @@ def test_the_rules_cover_dev_deploys_and_releases():
     assert "merge your branch into the `dev` branch" in role
     assert "Don't merge to main, push, release or touch prod unless admin says to in this session." in role
     assert "`release` skill" in role
+
+
+def test_with_an_mcp_url_the_session_goes_through_biscuits(write_config, op, tmp_path, launched):
+    op.people = {KEY: BOT}
+    token_file = tmp_path / "agent.token"
+    token_file.write_text("bsk_tok\n")
+    write_config(extra=section(tmp_path) + f'mcp_url = "http://your-biscuits-host:8000/mcp/"\n'
+                                          f'mcp_token_file = "{token_file}"\n')
+    assert run().exit_code == 0
+    argv = launched[0]
+    mcp = argv[argv.index("--mcp-config") + 1]
+    assert stat.S_IMODE(os.stat(mcp).st_mode) == 0o600
+    server = json.load(open(mcp))["mcpServers"]["openproject"]
+    assert server == {"command": sys.executable, "args": ["-m", "biscuits", "mcp"],
+                      "env": {"BISCUITS_MCP_URL": "http://your-biscuits-host:8000/mcp",
+                              "BISCUITS_MCP_TOKEN_FILE": str(token_file)}}
+    text = open(mcp).read()
+    assert "bsk_tok" not in text and KEY not in text  # neither the token nor the OpenProject key
+
+
+def test_a_missing_token_file_stops_the_launch(write_config, op, tmp_path, launched):
+    op.people = {KEY: BOT}
+    write_config(extra=section(tmp_path) + f'mcp_url = "http://x/mcp"\nmcp_token_file = "{tmp_path}/nope"\n')
+    r = run()
+    assert r.exit_code == 1 and "doesn't exist" in r.output
+    assert not launched
+
+
+@pytest.mark.parametrize("extra, error", [
+    ('mcp_url = "http://x/mcp"\n', "go together"),
+    ('mcp_token_file = "/x"\n', "go together"),
+    ('mcp_url = "x/mcp"\nmcp_token_file = "/x"\n', "must start with http"),
+])
+def test_mcp_settings_are_checked(write_config, tmp_path, launched, extra, error):
+    write_config(extra=section(tmp_path) + extra)
+    r = run()
+    assert r.exit_code == 1 and error in r.output
