@@ -147,8 +147,9 @@ refuses a token that belongs to an OpenProject admin. The session's MCP settings
 are written to `agent-mcp.json` in the data directory, mode 600, which keeps them
 out of `ps` and the session's environment.
 
-With `[agent] mcp_url` and `mcp_token`, the session reaches OpenProject through a
-biscuits server's MCP endpoint, below, as that token's account. Without them it
+With `[agent] mcp_url` and `mcp_token_file`, the session reaches OpenProject through
+a biscuits server's MCP endpoint, below, as that token's account. It uses `biscuits
+mcp`, which reads the token from the file, so the token isn't copied anywhere. Without them it
 uses `biscuits mcp-direct`, straight to OpenProject.
 
 The session runs as your own Unix user, so the agent's permissions are limited in

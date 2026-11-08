@@ -92,9 +92,11 @@ def write_mcp_config(cfg: config.Config) -> Path:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.fchmod(fd, 0o600)  # in case the file was already there
     if cfg.agent.mcp_url:
-        # Through biscuits, as the account the token belongs to.
-        server = {"type": "http", "url": cfg.agent.mcp_url,
-                  "headers": {"Authorization": f"Bearer {cfg.agent.mcp_token}"}}
+        # Through biscuits, as the account the token belongs to. `biscuits mcp`
+        # reads the token from its file, so it's never copied anywhere else.
+        server = {"command": sys.executable, "args": ["-m", "biscuits", "mcp"],
+                  "env": {"BISCUITS_MCP_URL": cfg.agent.mcp_url,
+                          "BISCUITS_MCP_TOKEN_FILE": str(cfg.agent.mcp_token_file)}}
     else:
         # Not set up for that yet: straight to OpenProject, outside biscuits.
         server = {"command": sys.executable, "args": ["-m", "biscuits", "mcp-direct"],
@@ -112,6 +114,10 @@ def launch() -> None:
     claude = shutil.which("claude")
     if claude is None:
         raise config.ConfigError("Can't find the `claude` command on your PATH.")
+    if cfg.agent.mcp_token_file and not cfg.agent.mcp_token_file.is_file():
+        raise config.ConfigError(
+            f"[agent] mcp_token_file {cfg.agent.mcp_token_file} doesn't exist. "
+            "Make one with `biscuits tokens add ... --out FILE`.")
 
     op = client.OP(cfg.agent.token, actor={"system": "agent"})
     me = op.get("/users/me")

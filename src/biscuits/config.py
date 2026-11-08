@@ -41,10 +41,11 @@ class AgentConfig:
     project: int
     workdir: Path | None
     docs: Path | None
-    # The biscuits MCP endpoint the session uses, and a biscuits API token for it.
-    # Without them the session talks to OpenProject directly (`biscuits mcp-direct`).
+    # The biscuits MCP endpoint the session uses, and a file holding a biscuits API
+    # token for it. Without them the session talks to OpenProject directly
+    # (`biscuits mcp-direct`).
     mcp_url: str | None = None
-    mcp_token: str | None = None
+    mcp_token_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -251,20 +252,20 @@ def _parse_agent(raw: dict, path: Path) -> AgentConfig | None:
         raise ConfigError(f"{path}: [agent] workdir must be a path")
     if docs is not None and not (isinstance(docs, str) and docs):
         raise ConfigError(f"{path}: [agent] docs must be a path")
-    mcp_url, mcp_token = agent.get("mcp_url"), agent.get("mcp_token")
+    mcp_url, token_file = agent.get("mcp_url"), agent.get("mcp_token_file")
     if mcp_url is not None and not (isinstance(mcp_url, str) and mcp_url.startswith(("http://", "https://"))):
         raise ConfigError(f"{path}: [agent] mcp_url must start with http:// or https://")
-    if mcp_token is not None and not (isinstance(mcp_token, str) and mcp_token.strip()):
-        raise ConfigError(f"{path}: [agent] mcp_token must be a token")
-    if bool(mcp_url) != bool(mcp_token):
-        raise ConfigError(f"{path}: [agent] mcp_url and mcp_token go together: set both or neither")
+    if token_file is not None and not (isinstance(token_file, str) and token_file.strip()):
+        raise ConfigError(f"{path}: [agent] mcp_token_file must be a path")
+    if bool(mcp_url) != bool(token_file):
+        raise ConfigError(f"{path}: [agent] mcp_url and mcp_token_file go together: set both or neither")
     return AgentConfig(
         token=token.strip(),
         project=project,
         workdir=Path(workdir).expanduser() if workdir else None,
         docs=Path(docs).expanduser() if docs else None,
         mcp_url=mcp_url.rstrip("/") if mcp_url else None,
-        mcp_token=mcp_token.strip() if mcp_token else None,
+        mcp_token_file=Path(token_file.strip()).expanduser() if token_file else None,
     )
 
 
