@@ -3,6 +3,12 @@
 Each release of biscuits, newest first. A release is the only thing that changes
 the version, and every release goes to prod. See "Releases" in `README.md`.
 
+## 0.7.0 (2026-11-13)
+
+- **New tasks start today** (#3512). When you add a task or subtask, its start
+  date is filled in with today's date, which you can change or clear. If the
+  task's due date has already passed, the start date is set to the due date.
+
 ## 0.6.0 (2026-11-08)
 
 - **Assistants and bots go through biscuits** (#3490, #3476). Programs such as the

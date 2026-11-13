@@ -1,3 +1,3 @@
 """biscuits: an Asana-flavoured web UI for OpenProject."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
