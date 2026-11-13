@@ -130,7 +130,7 @@ function paintTA() {
   taItems = [
     ...res.projects.slice(0, 3).map((p) => ({ kind: "Project", go: () => go(`/project/${p.id}`), html: `<span class="ptile-ic sm" style="--h:${hue(p.name)}">${ICON.list}</span><b>${esc(p.name)}</b>` })),
     ...res.people.slice(0, 3).map((u) => ({ kind: "Person", go: () => go(`/people/${u.id}`), html: `${avatar(u.name, "sm")}<b>${esc(u.name)}</b>` })),
-    ...res.tasks.map((r) => ({ kind: "Task", go: () => openTask(r.id), html: `<span class="check mini ${r.done ? "on" : ""}">${ICON.check}</span><span class="ta-t ${r.done ? "done" : ""}">${esc(r.subject)}</span><span class="muted">${esc(r.project || "")}${r.due ? " · " + esc(friendlyDate(r.due)) : ""}</span>` })),
+    ...res.tasks.map((r) => ({ kind: "Task", go: () => openTask(r.id), html: `<span class="ta-t ${r.done ? "done" : ""}">${esc(r.subject)}</span><span class="muted">${esc(r.project || "")}${r.due ? " · " + esc(friendlyDate(r.due)) : ""}</span>` })),
   ];
   taIdx = Math.min(taIdx, Math.max(0, taItems.length - 1));
   ta.innerHTML = taItems.map((it, i) => `<div class="ta-item ${i === taIdx ? "focus" : ""}" data-i="${i}"><span class="stype">${it.kind}</span>${it.html}</div>`).join("") +

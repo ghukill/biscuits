@@ -4,7 +4,7 @@
 // and drag-to-section where the view allows it.
 
 import { esc, h, avatar, friendlyDate, dueClass, hue, ICON, $$ } from "./util.js";
-import { S, row, children, toggleComplete, update, create, liveProject, activeProjects, getJSON } from "./store.js";
+import { S, row, children, update, create, liveProject, activeProjects, getJSON } from "./store.js";
 import { pickPerson, pickDate, pickStatus, pickPriority, pickProject, statusPill, closePopover } from "./ui.js";
 import { openTask, currentTask, go } from "./nav.js";
 import { pickBox, pickClick, domOrder, isPicked, dragsPicks, dragLabel, movePicked } from "./select.js";
@@ -107,7 +107,6 @@ function renderRow(parts, r, depth, cols, opts, sel, shown) {
   parts.push(`<div class="tl-row ${r.done ? "done" : ""} ${sel === r.id ? "sel" : ""} ${isPicked(r.id) ? "picked" : ""} ${r._saving ? "saving" : ""}" data-id="${r.id}" draggable="${opts.draggable ? "true" : "false"}" style="--depth:${depth}">
     <div class="c-name">
       ${pickBox(r)}<button class="caret ${open ? "open" : ""} ${kids.length ? "" : "none"}" type="button" tabindex="-1" aria-label="Show subtasks">${ICON.caret}</button>
-      <button class="check ${r.done ? "on" : ""}" type="button" title="${r.done ? "Mark incomplete" : "Mark complete"}" aria-label="Complete">${ICON.check}</button>
       <span class="title" spellcheck="false">${esc(r.subject)}</span>
       ${r.id > 0 ? `<span class="tl-num" title="Task number">#${r.id}</span>` : ""}
       ${allKids.length ? `<span class="subcount" title="${nOpen} open of ${allKids.length} subtasks">${nOpen || allKids.length}${ICON.sub}</span>` : ""}
@@ -167,7 +166,7 @@ function startAdd(host, addEl) {
   const state = host._list;
   const needProject = !ctx.project_id && !ctx.parent_id;
   let project_id = ctx.project_id || null;
-  const inp = h(`<div class="tl-add editing"><span class="check ghost">${ICON.check}</span><input placeholder="Write a task name" maxlength="255">${needProject ? `<button type="button" class="btn sm proj-btn">Pick project</button>` : ""}</div>`);
+  const inp = h(`<div class="tl-add editing"><input placeholder="Write a task name" maxlength="255">${needProject ? `<button type="button" class="btn sm proj-btn">Pick project</button>` : ""}</div>`);
   addEl.replaceWith(inp);
   const field = inp.querySelector("input");
   state.editing = true;
@@ -232,7 +231,6 @@ function wire(host) {
     const r = row(rowEl.dataset.id);
     if (!r) return;
     if (pickClick(e, r.id, domOrder(host, ".tl-row[data-id]"))) return;
-    if (t.closest(".check")) return toggleComplete(r.id);
     if (t.closest(".caret")) {
       expanded.has(r.id) ? expanded.delete(r.id) : expanded.add(r.id);
       saveExpanded(); renderList(host, host._list.opts); return;

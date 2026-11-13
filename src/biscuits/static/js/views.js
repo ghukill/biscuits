@@ -2,7 +2,7 @@
 // Each view renders into #view and is re-run whenever the store changes.
 
 import { $, $$, esc, h, avatar, friendlyDate, longDate, dueClass, hue, ago, T, RANGES, inRange, ICON } from "./util.js";
-import { S, row, children, allRows, workingRows, isSection, sectionTitle, sectionsOf, createSection, renameSection, moveSection, MAX_SECTION_NAME, liveProject, activeProjects, archivedProjects, archivedInOP, projectName, toggleComplete, update, create, writeLog, setArchived } from "./store.js";
+import { S, row, children, allRows, workingRows, isSection, sectionTitle, sectionsOf, createSection, renameSection, moveSection, MAX_SECTION_NAME, liveProject, activeProjects, archivedProjects, archivedInOP, projectName, update, create, writeLog, setArchived } from "./store.js";
 import { renderList, pickFor } from "./list.js";
 import { menu, askText, toast } from "./ui.js";
 import { href, go, openTask, currentTask, setParam } from "./nav.js";
@@ -251,7 +251,6 @@ function renderBoard(host, groups, vis, actions) {
     if (!c) return;
     const r = row(c.dataset.id);
     if (pickClick(e, r.id, domOrder(host, ".bcard[data-id]"))) return;
-    if (t.closest(".check")) return toggleComplete(r.id);
     const pk = t.closest("[data-pick]");
     if (pk) return pickFor(pk.dataset.pick, pk, r);
     openTask(r.id);
@@ -296,7 +295,7 @@ function card(r, sel, vis) {
   const kids = children(r.id);
   const openK = kids.filter((k) => !k.done).length;
   return `<div class="bcard ${r.done ? "done" : ""} ${sel === r.id ? "sel" : ""} ${isPicked(r.id) ? "picked" : ""}" data-id="${r.id}" draggable="true">
-    <div class="bcard-top"><button class="check ${r.done ? "on" : ""}" type="button">${ICON.check}</button><span class="bcard-title">${esc(r.subject)}</span>${pickBox(r)}</div>
+    <div class="bcard-top"><span class="bcard-title">${esc(r.subject)}</span>${pickBox(r)}</div>
     <div class="bcard-meta">
       <span data-pick="assignee">${avatar(r.assignee, "xs")}</span>
       <span class="c-due ${dueClass(r)}" data-pick="due">${r.due ? esc(friendlyDate(r.due)) : ""}</span>

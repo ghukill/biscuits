@@ -3,7 +3,7 @@
 // header filters that keep a row if any descendant matches.
 
 import { $, esc, avatar, friendlyDate, dueClass, hue, T, RANGES, inRange, ICON } from "./util.js";
-import { S, workingRows, row, toggleComplete } from "./store.js";
+import { S, workingRows, row } from "./store.js";
 import { openTask, currentTask } from "./nav.js";
 import { pickFor } from "./list.js";
 import { pickBox, pickClick, isPicked } from "./select.js";
@@ -46,7 +46,6 @@ const distinct = (field, blank) => [...new Set(workingRows().map((r) => r[field]
 
 const fmt = {
   pick: (c) => { const r = row(c.getRow().getData().id); return r ? pickBox(r) : ""; },
-  check: (c) => { const r = c.getRow().getData(); return r.section != null ? "" : `<button class="check ${r.done ? "on" : ""}" type="button">${ICON.check}</button>`; },
   subject: (c) => {
     const r = c.getRow().getData();
     const n = (r._children || []).length;
@@ -71,7 +70,6 @@ function columns() {
   const nullsLast = { sorterParams: { alignEmptyValues: "bottom" } };
   return [
     { title: "", field: "_pick", width: 34, headerSort: false, formatter: fmt.pick, cssClass: "col-pick", resizable: false },
-    { title: "", field: "done", width: 44, headerSort: false, formatter: fmt.check, cssClass: "col-check", resizable: false },
     { title: "Task name", field: "subject", minWidth: 320, widthGrow: 4, formatter: fmt.subject, headerFilter: "input", headerFilterFunc: textFilter("subject"), headerFilterPlaceholder: "filter…" },
     { title: "Project", field: "project", minWidth: 150, widthGrow: 1.3, formatter: fmt.project, ...list("project") },
     { title: "Assignee", field: "assignee", minWidth: 160, widthGrow: 1, formatter: fmt.person, ...list("assignee", UNASSIGNED), ...nullsLast, cssClass: "pickable" },
@@ -159,7 +157,6 @@ export function viewAll(el) {
     const d = cell.getRow().getData();
     if (e.target.closest("a, .tabulator-data-tree-control")) return;
     if (pickClick(e, d.id, shownOrder)) return;
-    if (e.target.closest(".check")) return toggleComplete(d.id);
     const pick = PICKS[cell.getColumn().getField()];
     const r = row(d.id);
     if (pick && r && d.section == null) return pickFor(pick, cell.getElement(), r);

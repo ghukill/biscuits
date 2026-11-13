@@ -264,7 +264,6 @@ function stRows(id, depth, out) {
     const open = kids.length && expanded.has(k.id);
     out.push(`<div class="st-row ${k.done ? "done" : ""}" data-id="${k.id}" style="--depth:${depth}">
       <button class="caret ${open ? "open" : ""} ${kids.length ? "" : "none"}" data-act="st-caret" type="button" aria-label="Show subtasks">${ICON.caret}</button>
-      <button class="check ${k.done ? "on" : ""}" data-act="st-check" type="button">${ICON.check}</button>
       <span class="st-title">${esc(k.subject)}</span>
       ${kids.length ? `<span class="subcount" title="${kids.filter((c) => !c.done).length} open of ${kids.length}">${kids.length}${ICON.sub}</span>` : ""}
       ${k._preview || k._local ? `<span class="badge-preview">preview</span>` : ""}
@@ -410,7 +409,6 @@ export function wirePane() {
     if (st) {
       const k = row(st.dataset.id);
       if (a === "st-caret") { expanded.has(k.id) ? expanded.delete(k.id) : expanded.add(k.id); saveExpanded(); return paint(); }
-      if (a === "st-check") return toggleComplete(k.id);
       if (a === "st-due") return pickFor("due", act, k);
       if (a === "st-who") return pickFor("assignee", act, k);
     }
