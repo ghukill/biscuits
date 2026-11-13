@@ -123,3 +123,14 @@ def test_a_live_write_keeps_the_creator_on_the_row(write_config, web_as):
     web = web_as()
     r = web.post("/api/wp", json={"project_id": 1, "subject": "New"}, headers=H)
     assert r.json["row"]["author"] == "Cass Creator"
+
+
+def test_a_new_task_keeps_the_start_date_the_browser_sends(write_config, web_as, op):
+    # The browser fills in today as the start of every new task (#3512).
+    write_config("live", '"*"')
+    web = web_as()
+    web.post("/api/wp", json={"project_id": 1, "subject": "New", "start": "2026-11-13"}, headers=H)
+    method, path, body = op.writes[-1][:3]
+    assert (method, path) == ("POST", "/api/v3/work_packages")
+    assert body["startDate"] == "2026-11-13" and "dueDate" not in body
+    assert body["ignoreNonWorkingDays"] is True  # a Saturday start stays a Saturday

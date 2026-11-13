@@ -4,6 +4,7 @@
 // allow-listed projects) or logs it as a preview.
 
 import { toast } from "./ui.js";
+import { iso } from "./util.js";
 
 const BASE = document.body.dataset.base;
 const HDRS = { "Content-Type": "application/json", "X-Biscuits": "1" };
@@ -219,6 +220,11 @@ export async function create({ project_id, parent_id, subject, assignee_id, due 
   const par = parent_id ? row(parent_id) : null;
   project_id = par ? par.project_id : project_id;
   const id = tmpId--;
+  // New tasks start today, in the person's own time zone (#3512). Worked out now,
+  // not at page load, so a tab left open overnight still uses the right day. The
+  // start can't come after the due date, so a due date already past wins.
+  const today = iso(new Date());
+  const start = due && due < today ? due : today;
   const def = S.statuses.get(S.snap.reopen_status_id) || {};
   const r = {
     id, subject, section: null, project_id, project: projectName(project_id),
@@ -226,13 +232,13 @@ export async function create({ project_id, parent_id, subject, assignee_id, due 
     priority: "Normal", assignee_id: assignee_id || null,
     assignee: assignee_id ? (S.users.get(+assignee_id) || {}).name : null,
     author_id: S.meId, author: S.me,
-    due: due || null, start: null, parent_id: parent_id || null, pct: null,
-    created: new Date().toISOString().slice(0, 10), _local: true, _saving: true,
+    due: due || null, start, parent_id: parent_id || null, pct: null,
+    created: today, _local: true, _saving: true,
   };
   S.rows.set(id, r); reindex();
   emit({ type: "create", ids: [id] });
   try {
-    const res = await api("/api/wp", { method: "POST", body: JSON.stringify({ project_id, parent_id, subject, assignee_id, due }) });
+    const res = await api("/api/wp", { method: "POST", body: JSON.stringify({ project_id, parent_id, subject, assignee_id, due, start }) });
     r._saving = false;
     if (res.sent && res.row) {
       // Swap the temp row for the real one.
