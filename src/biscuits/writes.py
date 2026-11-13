@@ -242,6 +242,42 @@ def update(conn, wp_id, changes, notify=True):
                     {"wp": int(wp_id), "subject_before": cur.get("subject")})
 
 
+# A bulk edit is capped so one click can't send thousands of writes.
+MAX_BULK = 100
+
+
+def bulk_items(items):
+    """Check a bulk edit's shape: a list of {"id": int, "changes": {...}}, each task once."""
+    if not isinstance(items, list) or not items:
+        raise WriteError("Pick at least one task to change")
+    if len(items) > MAX_BULK:
+        raise WriteError(f"A bulk edit can change up to {MAX_BULK} tasks at a time")
+    seen = set()
+    for it in items:
+        if (not isinstance(it, dict) or type(it.get("id")) is not int
+                or not isinstance(it.get("changes"), dict) or not it["changes"]):
+            raise WriteError("Each change needs a task id and the fields to change")
+        if it["id"] in seen:
+            raise WriteError(f"#{it['id']} is in the list twice")
+        seen.add(it["id"])
+    return items
+
+
+def bulk_update(conn, items, notify=True):
+    """Update several tasks, one at a time, each through update() and so through
+    the gate and the log. A task that fails doesn't stop the rest; the outcome of
+    each comes back in order. A rejected key (401) stops everything, because every
+    later write would fail the same way."""
+    out = []
+    for it in bulk_items(items):
+        try:
+            out.append({"id": it["id"], "ok": True, **update(conn, it["id"], it["changes"], notify)})
+        except WriteError as e:
+            if e.status == 401:
+                raise
+            out.append({"id": it["id"], "ok": False, "error": str(e)})
+    return out
+
 def comment(conn, wp_id, text, notify=True):
     text = str(text or "").strip()
     if not text:

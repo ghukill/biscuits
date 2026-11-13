@@ -6,6 +6,7 @@ import { S, row, children, allRows, workingRows, isSection, sectionTitle, sectio
 import { renderList, pickFor } from "./list.js";
 import { menu, askText, toast } from "./ui.js";
 import { href, go, openTask, currentTask, setParam } from "./nav.js";
+import { pickBox, pickClick, domOrder, isPicked, dragsPicks, dragLabel, movePicked } from "./select.js";
 
 // ---------- shared: completion filter (Asana's "Incomplete / Completed / All") ----------
 const COMP_KEY = "biscuits.completion.v1";
@@ -237,6 +238,7 @@ function renderBoard(host, groups, vis, actions) {
     </div>`).join("")}${actions.addSection ? `<button class="btn sm add-section" type="button">${ICON.plus} Add section</button>` : ""}</div>`;
   if (host._wired) return;
   host._wired = true;
+  host.addEventListener("mousedown", (e) => { if (e.shiftKey && e.target.closest(".bcard")) e.preventDefault(); });
   host.addEventListener("click", (e) => {
     const t = e.target;
     const addSection = t.closest(".add-section");
@@ -248,6 +250,7 @@ function renderBoard(host, groups, vis, actions) {
     const c = t.closest(".bcard");
     if (!c) return;
     const r = row(c.dataset.id);
+    if (pickClick(e, r.id, domOrder(host, ".bcard[data-id]"))) return;
     if (t.closest(".check")) return toggleComplete(r.id);
     const pk = t.closest("[data-pick]");
     if (pk) return pickFor(pk.dataset.pick, pk, r);
@@ -267,6 +270,7 @@ function renderBoard(host, groups, vis, actions) {
       return;
     }
     const c = e.target.closest(".bcard"); if (!c) return; dragId = +c.dataset.id; c.classList.add("dragging"); e.dataTransfer.setData("text/plain", String(dragId));
+    if (dragsPicks(dragId)) dragLabel(e);
   });
   host.addEventListener("dragend", () => { dragId = dragSection = null; $$(".drop-on,.dragging", host).forEach((x) => x.classList.remove("drop-on", "dragging")); });
   const dropCol = (e) => (dragSection ? e.target.closest(".bcol[data-section]") : dragId && e.target.closest(".bcol"));
@@ -283,6 +287,7 @@ function renderBoard(host, groups, vis, actions) {
     e.preventDefault();
     const r = row(movedCard);
     const parent = col.dataset.drop === "root" ? null : +col.dataset.drop;
+    if (r && dragsPicks(r.id)) return movePicked(parent, parent ? row(parent).project_id : r.project_id);
     if (r && r.parent_id !== parent) update(r.id, { parent_id: parent }, { undoLabel: `Moved “${r.subject.slice(0, 40)}”` });
   });
 }
@@ -290,8 +295,8 @@ function renderBoard(host, groups, vis, actions) {
 function card(r, sel, vis) {
   const kids = children(r.id);
   const openK = kids.filter((k) => !k.done).length;
-  return `<div class="bcard ${r.done ? "done" : ""} ${sel === r.id ? "sel" : ""}" data-id="${r.id}" draggable="true">
-    <div class="bcard-top"><button class="check ${r.done ? "on" : ""}" type="button">${ICON.check}</button><span class="bcard-title">${esc(r.subject)}</span></div>
+  return `<div class="bcard ${r.done ? "done" : ""} ${sel === r.id ? "sel" : ""} ${isPicked(r.id) ? "picked" : ""}" data-id="${r.id}" draggable="true">
+    <div class="bcard-top"><button class="check ${r.done ? "on" : ""}" type="button">${ICON.check}</button><span class="bcard-title">${esc(r.subject)}</span>${pickBox(r)}</div>
     <div class="bcard-meta">
       <span data-pick="assignee">${avatar(r.assignee, "xs")}</span>
       <span class="c-due ${dueClass(r)}" data-pick="due">${r.due ? esc(friendlyDate(r.due)) : ""}</span>

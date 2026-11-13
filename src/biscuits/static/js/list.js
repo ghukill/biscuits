@@ -7,6 +7,7 @@ import { esc, h, avatar, friendlyDate, dueClass, hue, ICON, $$ } from "./util.js
 import { S, row, children, toggleComplete, update, create, liveProject, activeProjects, getJSON } from "./store.js";
 import { pickPerson, pickDate, pickStatus, pickPriority, pickProject, statusPill, closePopover } from "./ui.js";
 import { openTask, currentTask, go } from "./nav.js";
+import { pickBox, pickClick, domOrder, isPicked, dragsPicks, dragLabel, movePicked } from "./select.js";
 
 const EXP_KEY = "biscuits.expanded.v1";
 const COL_KEY = "biscuits.collapsed.v1";
@@ -103,9 +104,9 @@ function renderRow(parts, r, depth, cols, opts, sel, shown) {
     ? `<span class="crumb" ${par.section != null ? "" : `data-open="${par.id}"`} title="${par.section != null ? "Section" : "Parent task"}">‹ ${esc(parName)}</span>` : "";
   const nOpen = allKids.filter((c) => !c.done).length;
   const cells = cols.map((c) => cell(c, r)).join("");
-  parts.push(`<div class="tl-row ${r.done ? "done" : ""} ${sel === r.id ? "sel" : ""} ${r._saving ? "saving" : ""}" data-id="${r.id}" draggable="${opts.draggable ? "true" : "false"}" style="--depth:${depth}">
+  parts.push(`<div class="tl-row ${r.done ? "done" : ""} ${sel === r.id ? "sel" : ""} ${isPicked(r.id) ? "picked" : ""} ${r._saving ? "saving" : ""}" data-id="${r.id}" draggable="${opts.draggable ? "true" : "false"}" style="--depth:${depth}">
     <div class="c-name">
-      <button class="caret ${open ? "open" : ""} ${kids.length ? "" : "none"}" type="button" tabindex="-1" aria-label="Show subtasks">${ICON.caret}</button>
+      ${pickBox(r)}<button class="caret ${open ? "open" : ""} ${kids.length ? "" : "none"}" type="button" tabindex="-1" aria-label="Show subtasks">${ICON.caret}</button>
       <button class="check ${r.done ? "on" : ""}" type="button" title="${r.done ? "Mark incomplete" : "Mark complete"}" aria-label="Complete">${ICON.check}</button>
       <span class="title" spellcheck="false">${esc(r.subject)}</span>
       ${r.id > 0 ? `<span class="tl-num" title="Task number">#${r.id}</span>` : ""}
@@ -230,6 +231,7 @@ function wire(host) {
     if (!rowEl) return;
     const r = row(rowEl.dataset.id);
     if (!r) return;
+    if (pickClick(e, r.id, domOrder(host, ".tl-row[data-id]"))) return;
     if (t.closest(".check")) return toggleComplete(r.id);
     if (t.closest(".caret")) {
       expanded.has(r.id) ? expanded.delete(r.id) : expanded.add(r.id);
@@ -247,6 +249,8 @@ function wire(host) {
     closePopover();
     openTask(r.id);
   });
+  // Shift-click picks a range; don't let it select text as well.
+  host.addEventListener("mousedown", (e) => { if (e.shiftKey && e.target.closest(".tl-row")) e.preventDefault(); });
   host.addEventListener("dblclick", (e) => {
     const title = e.target.closest(".title");
     const rowEl = e.target.closest(".tl-row");
@@ -274,6 +278,7 @@ function wire(host) {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(dragId));
     rowEl.classList.add("dragging");
+    if (dragsPicks(dragId)) dragLabel(e);
   });
   host.addEventListener("dragend", () => { dragId = dragSection = null; $$(".drop-on", host).forEach((x) => x.classList.remove("drop-on")); $$(".dragging", host).forEach((x) => x.classList.remove("dragging")); });
   const target = (e) => e.target.closest("[data-drop]:not([data-drop=''])");
@@ -299,6 +304,7 @@ function wire(host) {
     e.preventDefault();
     const r = row(movedRow);
     const parent = d.dataset.drop === "root" ? null : +d.dataset.drop;
+    if (r && dragsPicks(r.id)) return movePicked(parent, parent ? row(parent).project_id : r.project_id);
     if (r && r.parent_id !== parent) {
       update(r.id, { parent_id: parent }, { undoLabel: `Moved “${r.subject.slice(0, 40)}”` });
     }

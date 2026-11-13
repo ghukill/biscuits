@@ -12,7 +12,7 @@ def web(write_config, web_as):
 
 
 def test_shell_routes_and_static_assets(web):
-    for path in ["/", "/home", "/my", "/all", "/search", "/log", "/archived", "/project/3", "/people/3"]:
+    for path in ["/", "/home", "/my", "/all", "/search", "/log", "/archived", "/bulk", "/project/3", "/people/3"]:
         assert web.get(path).status_code == 200, path
     html = web.get("/").text
     assert 'data-base=""' in html

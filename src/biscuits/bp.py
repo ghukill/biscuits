@@ -12,6 +12,7 @@ router picks the view:
   /search?q=        Search results
   /log              Write log (what biscuits sent / would have sent)
   /archived         Archived projects
+  /bulk?ids=        Bulk edit the selected tasks
 Any of them accept ?task=<id> to open the task detail pane.
 
 JSON API:
@@ -22,6 +23,7 @@ JSON API:
   GET  /api/attachment/<id>  An attachment's contents, fetched with the person's key
                              (images inline, everything else as a download)
   POST /api/wp/<id>          Update fields          } gated by writes.py:
+  POST /api/wp/bulk          Update several tasks   } (each one gated and logged)
   POST /api/wp/<id>/comment  Add a comment          } live only for allow-listed
   POST /api/wp               Create a task/subtask  } projects, else preview
   GET  /api/assignees/<pid>  Who can be assigned in a project
@@ -78,7 +80,7 @@ def index():
     return _shell()
 
 
-@bp.get("/<any(home, my, all, search, log, archived, admin, account):view>")
+@bp.get("/<any(home, my, all, search, log, archived, admin, account, bulk):view>")
 @bp.get("/project/<int:pid>")
 @bp.get("/people/<int:uid>")
 def views(**_):
@@ -286,6 +288,27 @@ def _write(fn, *args):
 def api_update(wp_id):
     return _write(writes.update, wp_id, (request.get_json(silent=True) or {}).get("changes") or {})
 
+
+
+@bp.post("/api/wp/bulk")
+def api_bulk_update():
+    """Bulk edit: {"items": [{"id", "changes"}]}. Each task succeeds or fails on its
+    own, and the reply lists every outcome, so the UI can say exactly which failed."""
+    op = current_op()
+    try:
+        outcomes = writes.bulk_update(op, (request.get_json(silent=True) or {}).get("items"))
+    except writes.WriteError as e:
+        if e.status == 401:
+            raise client.OPError(str(e), status=401) from e
+        return jsonify(ok=False, error=str(e)), 400
+    results = []
+    for o in outcomes:
+        res = o.get("result")
+        row = (snapshot.upsert(current_user.id, res)
+               if o["ok"] and o["sent"] and isinstance(res, dict) and res.get("_type") == "WorkPackage" else None)
+        results.append({"id": o["id"], "ok": o["ok"], "sent": o.get("sent", False),
+                        "reason": o.get("reason"), "error": o.get("error"), "row": row})
+    return jsonify(ok=True, results=results)
 
 @bp.post("/api/wp/<int:wp_id>/comment")
 def api_comment(wp_id):

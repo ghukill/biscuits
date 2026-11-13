@@ -8,6 +8,8 @@ import { viewHome, viewPeople, viewProject, viewSearch, viewLog, viewArchived, s
 import { viewAll, patchAll, reselectAll, unmountAll } from "./all.js";
 import { viewAccount, viewAdmin } from "./admin.js";
 import { popoverOpen, closePopover, toast } from "./ui.js";
+import { picked, onPicks, clearPicks, setPicks, paintPicks } from "./select.js";
+import { viewBulk } from "./bulk.js";
 
 const view = $("#view");
 let lastKey = "";
@@ -15,7 +17,8 @@ let lastKey = "";
 function routeKey(rt) { return `${rt.name}:${rt.id || ""}:${rt.name === "project" ? rt.q.get("view") || "" : ""}:${rt.name === "search" ? rt.q.get("q") : ""}`; }
 
 // These fetch their own data and hold forms: store changes mustn't redraw them.
-const OWN_DATA = new Set(["log", "admin", "account"]);
+// The bulk edit screen holds a half-filled form too.
+const OWN_DATA = new Set(["log", "admin", "account", "bulk"]);
 
 function renderView(rt) {
   if (rt.name !== "all") unmountAll();
@@ -29,6 +32,7 @@ function renderView(rt) {
     case "archived": return viewArchived(view);
     case "admin": return viewAdmin(view);
     case "account": return viewAccount(view);
+    case "bulk": return viewBulk(view, rt.q);
     default: return viewHome(view);
   }
 }
@@ -51,6 +55,11 @@ function render({ paneOnly } = {}) {
   const key = routeKey(rt);
   if (key !== lastKey) {
     S.justDone.clear();
+    // A selection belongs to the view it was made in, except on the way to and
+    // back from its bulk edit screen.
+    const wasBulk = lastKey.startsWith("bulk:");
+    if (rt.name === "bulk") setPicks((rt.q.get("ids") || "").split(",").filter(Boolean).map(Number));
+    else if (!wasBulk) clearPicks();
     lastKey = key;
     view.dataset.key = "";
     renderView(rt);
@@ -63,13 +72,14 @@ function render({ paneOnly } = {}) {
   }
   renderPane(currentTask());
   paintSidebar(rt);
+  paintBar();
   if (rt.name === "search") $("#q").value = rt.q.get("q") || "";
 }
 
 function titleFor(rt) {
   if (rt.name === "project") return (S.projects.get(rt.id) || {}).name || "Project";
   if (rt.name === "people") return (S.users.get(rt.id) || {}).name || "People";
-  return { my: "My tasks", all: "All tasks", search: "Search", log: "Write log", archived: "Archived projects", admin: "Accounts", account: "My account" }[rt.name] || "Home";
+  return { bulk: "Bulk edit", my: "My tasks", all: "All tasks", search: "Search", log: "Write log", archived: "Archived projects", admin: "Accounts", account: "My account" }[rt.name] || "Home";
 }
 
 // ---------- sidebar ----------
@@ -165,13 +175,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (isTyping()) { document.activeElement.blur(); return; }
     if (paneOpen()) { closeTask(); return; }
+    if (picked.size && route().name !== "bulk") { clearPicks(); return; }
   }
   if (isTyping()) return;
   if ((e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "j" || e.key === "k") && !e.altKey && !e.metaKey && !e.ctrlKey) {
     e.preventDefault(); step(e.key === "ArrowDown" || e.key === "j" ? 1 : -1); return;
   }
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && currentTask()) { e.preventDefault(); toggleComplete(currentTask()); return; }
-  if (e.key === "?" ) { toast("Shortcuts: / search · ↑↓ or j/k move between tasks · Ctrl+Enter complete · Esc close · double-click a name to rename", { ms: 9000 }); }
+  if (e.key === "?" ) { toast("Shortcuts: / search · ↑↓ or j/k move between tasks · Ctrl+Enter complete · Esc close · double-click a name to rename · Ctrl/Cmd-click or Shift-click to select several", { ms: 9000 }); }
 });
 
 $("#logout").addEventListener("click", async () => {
@@ -186,6 +197,27 @@ $("#side-toggle").addEventListener("click", () => {
 if (localStorage.getItem("biscuits.side") === "0") document.body.classList.add("side-collapsed");
 view.addEventListener("rerender", () => render({}));
 
+// ---------- selection bar (#3506) ----------
+const bar = document.createElement("div");
+bar.className = "pick-bar";
+bar.hidden = true;
+document.body.appendChild(bar);
+function paintBar() {
+  paintPicks(view);
+  const n = picked.size;
+  bar.hidden = !n || route().name === "bulk";
+  if (bar.hidden) return;
+  bar.innerHTML = `<span class="pick-n"><b>${n}</b> task${n === 1 ? "" : "s"} selected</span>
+    <button class="btn sm primary" type="button" data-act="bulk">Bulk edit</button>
+    <button class="btn sm ghost" type="button" data-act="clear">${ICON.x} Clear</button>`;
+}
+bar.addEventListener("click", (e) => {
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (act === "clear") clearPicks();
+  if (act === "bulk") go("/bulk", { ids: [...picked].join(","), from: location.pathname.slice(document.body.dataset.base.length) + location.search });
+});
+onPicks(paintBar);
+
 // ---------- store -> UI ----------
 onChange((ev) => {
   if (ev.type === "idchange") followId(ev.from, ev.to);
@@ -194,6 +226,7 @@ onChange((ev) => {
   else if (!OWN_DATA.has(rt.name)) renderView(rt);
   renderPane(currentTask());
   paintSidebar(rt);
+  paintPicks(view);
 });
 
 // ---------- boot ----------

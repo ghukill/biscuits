@@ -6,6 +6,7 @@ import { $, esc, avatar, friendlyDate, dueClass, hue, T, RANGES, inRange, ICON }
 import { S, workingRows, row, toggleComplete } from "./store.js";
 import { openTask, currentTask } from "./nav.js";
 import { pickFor } from "./list.js";
+import { pickBox, pickClick, isPicked } from "./select.js";
 
 const DUE_WINDOWS = {
   "Overdue": (r) => !!r.due && r.due < T && !r.done,
@@ -44,6 +45,7 @@ function buildTree() {
 const distinct = (field, blank) => [...new Set(workingRows().map((r) => r[field] ?? blank))].filter((v) => v != null).sort((a, b) => String(a).localeCompare(String(b)));
 
 const fmt = {
+  pick: (c) => { const r = row(c.getRow().getData().id); return r ? pickBox(r) : ""; },
   check: (c) => { const r = c.getRow().getData(); return r.section != null ? "" : `<button class="check ${r.done ? "on" : ""}" type="button">${ICON.check}</button>`; },
   subject: (c) => {
     const r = c.getRow().getData();
@@ -68,6 +70,7 @@ function columns() {
   const statusPos = Object.fromEntries([...S.statuses.values()].map((s) => [s.id, s.position]));
   const nullsLast = { sorterParams: { alignEmptyValues: "bottom" } };
   return [
+    { title: "", field: "_pick", width: 34, headerSort: false, formatter: fmt.pick, cssClass: "col-pick", resizable: false },
     { title: "", field: "done", width: 44, headerSort: false, formatter: fmt.check, cssClass: "col-check", resizable: false },
     { title: "Task name", field: "subject", minWidth: 320, widthGrow: 4, formatter: fmt.subject, headerFilter: "input", headerFilterFunc: textFilter("subject"), headerFilterPlaceholder: "filter…" },
     { title: "Project", field: "project", minWidth: 150, widthGrow: 1.3, formatter: fmt.project, ...list("project") },
@@ -88,6 +91,14 @@ function columns() {
 }
 
 function walk(rows, fn) { for (const r of rows) { fn(r); walk(r.getTreeChildren(), fn); } }
+// The ids in the order they're shown, including rows scrolled out of view, for
+// Shift-click ranges. Collapsed subtasks aren't shown, so they aren't included.
+function shownOrder() {
+  const out = [];
+  const visit = (rows) => { for (const r of rows) { out.push(r.getData().id); if (r.isTreeExpanded()) visit(r.getTreeChildren()); } };
+  visit(table.getRows("active"));
+  return out;
+}
 function setExpanded(open) {
   table.blockRedraw();
   try {
@@ -139,12 +150,15 @@ export function viewAll(el) {
       e.classList.toggle("done", !!d.done);
       e.classList.toggle("tree-child", !!r.getTreeParent());
       e.classList.toggle("sel", d.id === currentTask());
+      e.classList.toggle("picked", isPicked(d.id));
+      e.dataset.id = d.id;
       e.classList.toggle("section-row", d.section != null);
     },
   });
   table.on("cellClick", (e, cell) => {
     const d = cell.getRow().getData();
     if (e.target.closest("a, .tabulator-data-tree-control")) return;
+    if (pickClick(e, d.id, shownOrder)) return;
     if (e.target.closest(".check")) return toggleComplete(d.id);
     const pick = PICKS[cell.getColumn().getField()];
     const r = row(d.id);

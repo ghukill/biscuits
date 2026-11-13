@@ -201,6 +201,51 @@ export async function update(id, changes, opts = {}) {
   }
 }
 
+// Several tasks at once (#3506 bulk edit, #3497 moving a selection): items are
+// [{id, changes}]. Applied on screen first, like update(); the server then saves
+// each task on its own, and any that fail are put back. Resolves to
+// {saved, preview, failed: [{id, error}]}.
+export async function bulkUpdate(items, opts = {}) {
+  const undo = [], touched = [];
+  for (const it of items) {
+    const r = row(it.id);
+    const keys = Object.keys(it.changes).filter((k) => FIELDS.includes(k));
+    if (!r || !keys.length) continue;
+    undo.push({ id: r.id, changes: snapshotOf(r, keys) });
+    applyLocal(r, it.changes);
+    touched.push({ id: r.id, changes: Object.fromEntries(keys.map((k) => [k, it.changes[k]])) });
+  }
+  const ids = touched.map((it) => it.id);
+  const out = { saved: [], preview: [], failed: [] };
+  if (!touched.length) return out;
+  emit({ type: "update", ids });
+  let results;
+  try {
+    results = (await api("/api/wp/bulk", { method: "POST", body: JSON.stringify({ items: touched }) })).results;
+  } catch (e) {
+    for (const u of undo) applyLocal(row(u.id), u.changes);
+    emit({ type: "update", ids });
+    out.failed = ids.map((id) => ({ id, error: e.message }));
+    toast(`Couldn't save: ${e.message}`, { kind: "error", ms: 8000 });
+    return out;
+  }
+  const back = new Map(undo.map((u) => [u.id, u.changes]));
+  for (const res of results) {
+    const r = row(res.id);
+    if (!r) continue;
+    if (!res.ok) { applyLocal(r, back.get(res.id)); out.failed.push({ id: res.id, error: res.error }); }
+    else if (res.sent && res.row) { adoptServerRow(res.row); out.saved.push(res.id); }
+    else { previewNotice(r, res.reason); out.preview.push(res.id); }
+  }
+  emit({ type: "update", ids });
+  const done = new Set([...out.saved, ...out.preview]);
+  if (opts.undoLabel && done.size) {
+    const label = typeof opts.undoLabel === "function" ? opts.undoLabel(done.size) : opts.undoLabel;
+    toast(label, { action: "Undo", onAction: () => bulkUpdate(undo.filter((u) => done.has(u.id)), { undoLabel: (n) => `Undid the change to ${n} task${n === 1 ? "" : "s"}` }) });
+  }
+  return out;
+}
+
 export function toggleComplete(id) {
   const r = row(id);
   if (!r) return;

@@ -121,6 +121,15 @@ they touch is in `[writes] projects` (a list of ids, or `"*"` for all). Otherwis
 they apply in the browser as a preview and vanish on reload. New configs start
 in preview. Every attempt is logged, and there is no delete operation in the code.
 
+**Bulk edits** go through it too, one task at a time. Select tasks in a list, the
+board or All tasks (each row's checkbox, Ctrl/Cmd-click, or Shift-click for a
+range), then use **Bulk edit** in the bar at the bottom. That screen shows each
+field's shared value or "‹multiple values›", and checks every task before saving
+(permissions, start after due, project members), so nothing is sent until you
+confirm the summary. Each task is its own write in the log, and one that fails
+doesn't stop the rest. Dragging a selected task moves the whole selection to that
+section. Up to 100 tasks at a time (`writes.MAX_BULK`).
+
 The same gate covers **file uploads** in the task pane (the Add files button,
 dragging files onto the pane, or pasting an image). Each is up to 10 MB
 (`writes.MAX_UPLOAD`); OpenProject's own limit may be lower. The log records the
