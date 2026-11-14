@@ -52,6 +52,12 @@ def test_a_token_is_required(mcp, op, token):
     assert op.requests == []
 
 
+def test_mcp_cant_delete_anything(mcp):
+    # Deleting a task is for people in the task pane only (#3464).
+    names = [t["name"] for t in mcp.rpc("tools/list").get_json()["result"]["tools"]]
+    assert names and not [n for n in names if any(w in n for w in ("delete", "remove", "destroy"))]
+
+
 def test_a_signed_in_browser_session_is_not_enough(mcp, web_as):
     c = web_as("pat")
     r = c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers={"X-Biscuits": "1"})

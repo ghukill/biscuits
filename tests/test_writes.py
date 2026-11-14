@@ -60,8 +60,55 @@ def test_write_log_is_private_and_excludes_the_key(write_config, op, conn):
     assert json.loads(log.read_text().splitlines()[0])["op"] == "update"
 
 
-def test_no_delete_operation_exists():
+# ---------- deleting a task (#3464) ----------
+
+def test_the_only_delete_is_delete_task():
     assert not hasattr(writes, "delete")
+    assert [n for n in dir(writes) if "delete" in n.lower()] == ["delete_task"]
+
+
+def test_delete_sends_a_bare_delete_and_logs_the_name(write_config, op, conn):
+    write_config("live", "[1]")
+    out = writes.delete_task(conn, 1)
+    assert out["sent"] is True
+    assert op.writes == [("DELETE", "/api/v3/work_packages/1", None)]
+    entry = writes.recent(1)[0]
+    assert (entry["op"], entry["wp"], entry["subject_before"], entry["ok"]) == ("delete", 1, "A task", True)
+
+
+def test_delete_is_gated_like_every_write(write_config, op, conn):
+    write_config("preview", '"*"')
+    assert writes.delete_task(conn, 1)["sent"] is False
+    write_config("live", "[1]")
+    assert writes.delete_task(conn, 2)["sent"] is False  # stub: WP 2 is in project 2
+    assert op.writes == []
+    assert [e["sent"] for e in writes.recent(2)] == [False, False]
+
+
+def test_a_task_with_subtasks_cant_be_deleted(write_config, op, conn):
+    write_config("live", '"*"')
+    op.wp_links = {"children": [{"href": "/api/v3/work_packages/5"}, {"href": "/api/v3/work_packages/6"}]}
+    with pytest.raises(writes.WriteError, match="2 subtasks"):
+        writes.delete_task(conn, 1)
+    assert op.writes == []
+
+
+def test_a_section_cant_be_deleted(write_config, op, conn, monkeypatch):
+    write_config("live", '"*"')
+    op.wp_links = {"type": {"href": "/api/v3/types/3", "title": "Summary task"}}
+    real = writes._wp
+    monkeypatch.setattr(writes, "_wp", lambda c, n: {**real(c, n), "subject": "[Backlog]"})
+    with pytest.raises(writes.WriteError, match="Sections"):
+        writes.delete_task(conn, 1)
+    assert op.writes == []
+
+
+def test_openprojects_refusal_to_delete_is_logged(write_config, op, conn):
+    write_config("live", '"*"')
+    op.deny_writes = 403
+    with pytest.raises(writes.WriteError):
+        writes.delete_task(conn, 1)
+    assert writes.recent(1)[0]["ok"] is False
 
 
 @pytest.mark.parametrize("changes", [{"subject": " "}, {"nope": 1}, {"due": "soon"}, {}])

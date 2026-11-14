@@ -203,7 +203,7 @@ function buildColumnsMenu() {
 // Called by main on store changes while this view is mounted.
 export function patchAll(ev) {
   if (!table || !host || host.dataset.key !== "all") return;
-  if (ev.type === "reload" || ev.type === "create" || ev.type === "idchange") { table.replaceData(buildTree()); return; }
+  if (ev.type === "reload" || ev.type === "create" || ev.type === "idchange" || ev.type === "delete") { table.replaceData(buildTree()); return; }
   const ids = new Set(ev.ids || []);
   let structural = false;
   walk(table.getRows(), (r) => {

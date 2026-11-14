@@ -89,6 +89,23 @@ export function askText(anchor, { label, value = "", placeholder = "", action = 
   return el;
 }
 
+// ---------- ask "are you sure?" ----------
+// Without onConfirm it's just a message with an OK button.
+export function confirmBox(anchor, { title, body, action = "OK", danger = false, onConfirm }) {
+  const box = h(`<div class="confirm" role="alertdialog"><b>${esc(title)}</b><p>${esc(body)}</p>
+    <div class="ask-actions">${onConfirm ? `<button class="btn sm ghost" type="button" data-c="no">Cancel</button>` : ""}<button class="btn sm ${danger ? "danger" : "primary"}" type="button" data-c="yes">${esc(onConfirm ? action : "OK")}</button></div></div>`);
+  box.addEventListener("click", (e) => {
+    const c = e.target.closest("[data-c]")?.dataset.c;
+    if (!c) return;
+    closePopover();
+    if (c === "yes" && onConfirm) onConfirm();
+  });
+  const el = popover(anchor, box, { width: 320 });
+  // Start on Cancel, so Enter alone never deletes anything.
+  setTimeout(() => (box.querySelector('[data-c="no"]') || box.querySelector("button")).focus(), 0);
+  return el;
+}
+
 // ---------- specific pickers ----------
 export function pickPerson(anchor, users, current, onPick) {
   const items = [

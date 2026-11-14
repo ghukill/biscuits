@@ -159,8 +159,9 @@ def test_file_names_are_cleaned(given, kept):
     assert writes._file_name(given) == kept
 
 
-def test_there_is_still_no_delete():
-    assert not any(name.startswith(("delete", "remove", "detach")) for name in dir(writes))
+def test_the_only_delete_is_for_one_task():
+    # Deleting a task (#3464) is the one delete; files can't be removed.
+    assert [n for n in dir(writes) if n.startswith(("delete", "remove", "detach"))] == ["delete_task"]
 
 
 class _Recorder(BaseHTTPRequestHandler):

@@ -43,6 +43,13 @@ export function setPicks(ids) {
   changed();
 }
 
+// A deleted task can't stay picked.
+export function unpick(ids) {
+  let any = false;
+  for (const id of ids) any = picked.delete(+id) || any;
+  if (any) changed();
+}
+
 export function clearPicks() {
   if (!picked.size) return;
   picked.clear();

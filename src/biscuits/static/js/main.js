@@ -8,7 +8,7 @@ import { viewHome, viewPeople, viewProject, viewSearch, viewLog, viewArchived, s
 import { viewAll, patchAll, reselectAll, unmountAll } from "./all.js";
 import { viewAccount, viewAdmin } from "./admin.js";
 import { popoverOpen, closePopover, toast } from "./ui.js";
-import { picked, onPicks, clearPicks, setPicks, paintPicks } from "./select.js";
+import { picked, onPicks, clearPicks, setPicks, paintPicks, unpick } from "./select.js";
 import { viewBulk } from "./bulk.js";
 
 const view = $("#view");
@@ -221,6 +221,11 @@ onPicks(paintBar);
 // ---------- store -> UI ----------
 onChange((ev) => {
   if (ev.type === "idchange") followId(ev.from, ev.to);
+  if (ev.type === "delete") {
+    unpick(ev.ids);
+    // Replace, so Back doesn't reopen a task that's gone.
+    if (ev.ids.includes(currentTask())) openTask(null, { replace: true });
+  }
   const rt = route();
   if (rt.name === "all") patchAll(ev);
   else if (!OWN_DATA.has(rt.name)) renderView(rt);
