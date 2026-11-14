@@ -216,7 +216,7 @@ export function viewProject(el, pid, q) {
     });
   }
   renderList($("#list", el), {
-    scope: `p${pid}`, groups, cols: ["assignee", "due", "status", "priority"], visible: vis, draggable: true,
+    scope: `p${pid}`, groups, cols: ["assignee", "due", "status", "priority", "author"], visible: vis, draggable: true,
     empty: "No tasks in this project yet.",
     ...sectionActions,
     sectionMenu: (button, id) => openSectionMenu(button, pid, id, groups, ["Move up", "Move down"]),
@@ -302,7 +302,8 @@ function card(r, sel, vis) {
       ${kids.length ? `<span class="subcount" title="${openK} open of ${kids.length}">${openK}/${kids.length}${ICON.sub}</span>` : ""}
       ${r.status && r.status !== "New" && !r.done ? `<span class="pill status sm" style="--c:${esc(r.status_color || "#adb5bd")}">${esc(r.status)}</span>` : ""}
       ${r._preview || r._local ? `<span class="badge-preview">preview</span>` : ""}
-    </div></div>`;
+    </div>
+    ${r.author ? `<div class="bcard-by" title="Created by ${esc(r.author)}">Created by ${esc(r.author)}</div>` : ""}</div>`;
 }
 
 function boardAdd(host, addEl) {

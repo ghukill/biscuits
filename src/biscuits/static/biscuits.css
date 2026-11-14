@@ -273,6 +273,7 @@ body.pane-open .home-grid { grid-template-columns: 1fr; }
 .bcard-title { font-size: .88rem; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
 .bcard-meta { display: flex; align-items: center; gap: .5rem; margin-top: .45rem; font-size: .78rem; color: var(--muted); flex-wrap: wrap; }
 .bcard-meta:empty { display: none; }
+.bcard-by { margin-top: .35rem; font-size: .72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bcard.editing textarea { width: 100%; border: 0; outline: 0; resize: none; font: inherit; background: transparent; color: var(--text); }
 .bcard-add { color: var(--muted); padding: .45rem .6rem; border-radius: 9px; cursor: pointer; font-size: .86rem; display: flex; align-items: center; gap: .35rem; }
 .bcard-add svg { width: 14px; height: 14px; }
