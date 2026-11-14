@@ -3,6 +3,27 @@
 Each release of biscuits, newest first. A release is the only thing that changes
 the version, and every release goes to prod. See "Releases" in `README.md`.
 
+## 0.8.0 (2026-11-13)
+
+- **Change many tasks at once** (#3506). Tick the small square box on a task (or
+  Ctrl/Cmd-click it, or Shift-click for a range) in a project list, the board or
+  All tasks, then choose **Bulk edit**. You can set the status, assignee,
+  priority, start and due dates, and section for all of them together. Fields
+  the tasks don't share show "multiple values". Before anything is saved you see
+  a summary of every change, and tasks that can't take a change are left out and
+  listed. Undo puts them all back.
+- **Move several tasks at once** (#3497). With tasks selected, drag any one of
+  them to another section and they all move.
+- **No more round "complete" circles** (#3506). They looked too much like the new
+  select boxes. Mark a task complete by changing its Status, or with the Mark
+  complete button in the task pane. Finished tasks are crossed out.
+
+### Behind the scenes
+
+- New `POST /api/wp/bulk` endpoint: each task goes through the usual write
+  checks and the write log, up to 100 at a time, and one failure doesn't stop
+  the rest.
+
 ## 0.7.0 (2026-11-13)
 
 - **New tasks start today** (#3512). When you add a task or subtask, its start
