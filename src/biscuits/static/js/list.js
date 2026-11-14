@@ -23,6 +23,7 @@ const COLS = {
   project: { title: "Project", w: "minmax(120px, 190px)" },
   status: { title: "Status", w: "minmax(110px, 150px)" },
   priority: { title: "Priority", w: "100px" },
+  author: { title: "Created by", w: "minmax(130px, 170px)" },
 };
 
 // OP only accepts project members as assignees, so ask once per project.
@@ -123,6 +124,8 @@ function cell(c, r) {
   if (c === "project") return `<div class="cell c-project" data-proj="${r.project_id}"><span class="ppill" style="--h:${hue(r.project || "")}">${esc(r.project || "")}</span></div>`;
   if (c === "status") return `<div class="cell c-status" data-pick="status">${statusPill({ name: r.status, color: r.status_color })}</div>`;
   if (c === "priority") return `<div class="cell c-prio" data-pick="priority">${r.priority && r.priority !== "Normal" ? `<span class="pill prio-${esc(r.priority)}">${esc(r.priority)}</span>` : ""}</div>`;
+  // Read-only: the creator comes from OpenProject and can't be changed (#3471).
+  if (c === "author") return `<div class="cell c-author" ${r.author ? `title="Created by ${esc(r.author)}"` : ""}>${r.author ? `${avatar(r.author, "sm")}<span>${esc(r.author)}</span>` : ""}</div>`;
   return "";
 }
 
