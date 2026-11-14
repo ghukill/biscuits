@@ -163,7 +163,7 @@ class StubOP:
                 raw = self.rfile.read(n)
                 ctype = self.headers.get("Content-Type") or ""
                 multipart = ctype.startswith("multipart/form-data")
-                body = {"_multipart": len(raw)} if multipart else json.loads(raw)
+                body = {"_multipart": len(raw)} if multipart else (json.loads(raw) if raw else None)
                 stub.requests.append((self.command, self.path.removeprefix("/api/v3"), self._key()))
                 known, _ = self._person()
                 if not known:
@@ -175,6 +175,10 @@ class StubOP:
                     stub.writes.append((self.command, self.path, body))
                     return self._send(attachment(77, "shot.png", "image/png", len(raw)), 201)
                 stub.writes.append((self.command, self.path, body))
+                if self.command == "DELETE":  # OpenProject answers 204, with no body
+                    self.send_response(204)
+                    self.end_headers()
+                    return
                 if self.path.endswith("/users"):
                     return self._send({"_type": "User", "id": 50, "name": "New Person"})
                 self._send(wp(1, 1, subject="Changed"))

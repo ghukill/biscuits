@@ -3,8 +3,8 @@
 // Blocks re-render independently so typing in one never gets clobbered.
 
 import { $, esc, h, avatar, friendlyDate, shortDate, longDate, dueClass, hue, ago, safeHTML, ICON } from "./util.js";
-import { S, row, children, ancestors, update, toggleComplete, create, comment, detail, attach, liveProject, isSection, sectionTitle } from "./store.js";
-import { toast, statusPill } from "./ui.js";
+import { S, row, children, ancestors, update, toggleComplete, create, comment, detail, attach, liveProject, isSection, sectionTitle, deleteTask } from "./store.js";
+import { toast, statusPill, confirmBox } from "./ui.js";
 import { pickFor, expanded, saveExpanded } from "./list.js";
 import { openTask, closeTask, href, go } from "./nav.js";
 
@@ -99,6 +99,7 @@ function top(r) {
     <button class="icon-btn" data-act="next" title="Next task (↓)">${ICON.down}</button>
     <button class="icon-btn" data-act="copy" title="Copy task link">${ICON.link}</button>
     ${r._local ? "" : `<a class="icon-btn" href="${esc(S.snap.op_url)}/work_packages/${r.id}" target="_blank" rel="noopener" title="Open in OpenProject">${ICON.ext}</a>`}
+    ${live && !isSection(r) ? `<button class="icon-btn danger" data-act="delete" title="Delete task">${ICON.trash}</button>` : ""}
     <button class="icon-btn" data-act="close" title="Close details (Esc)">${ICON.x}</button>`;
 }
 
@@ -322,6 +323,26 @@ function compose(r) {
   return `${avatar(S.me, "sm")}<textarea class="p-comment" rows="1" placeholder="Add a comment…" data-act="comment"></textarea><button class="btn sm primary" data-act="send" type="button">Comment</button>`;
 }
 
+// ---------- deleting (#3464) ----------
+// One task at a time, only in write-enabled projects, never a task with subtasks
+// (OpenProject would delete them too). The server checks all of this again.
+function askDelete(anchor, r) {
+  const n = children(r.id).length;
+  if (n) {
+    return confirmBox(anchor, { title: "This task has subtasks",
+      body: `“${r.subject}” has ${n} subtask${n === 1 ? "" : "s"}. Delete or move ${n === 1 ? "it" : "them"} first, because deleting this task would delete ${n === 1 ? "it" : "them"} too.` });
+  }
+  if (r.can_delete === false) {
+    return confirmBox(anchor, { title: "Can't delete this task", body: "You don't have permission to delete this task in OpenProject." });
+  }
+  confirmBox(anchor, {
+    title: `Delete #${r.id}?`,
+    body: `“${r.subject}” will be deleted from OpenProject for good, with its comments and files. This can't be undone.`,
+    action: "Delete task", danger: true,
+    onConfirm: () => deleteTask(r.id),
+  });
+}
+
 // ---------- behaviour ----------
 function autosize(t) { if (t) { t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; } }
 
@@ -389,6 +410,7 @@ export function wirePane() {
     const st = t.closest(".st-row");
     if (a === "complete") return toggleComplete(r.id);
     if (a === "close") return closeTask();
+    if (a === "delete") return askDelete(act, r);
     if (a === "prev") return hooks.step(-1);
     if (a === "next") return hooks.step(1);
     if (a === "copy") {

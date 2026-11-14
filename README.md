@@ -119,7 +119,14 @@ By default, everything biscuits keeps lives next to the config file:
 Edits only reach OpenProject when `[writes] mode = "live"` **and** every project
 they touch is in `[writes] projects` (a list of ids, or `"*"` for all). Otherwise
 they apply in the browser as a preview and vanish on reload. New configs start
-in preview. Every attempt is logged, and there is no delete operation in the code.
+in preview. Every attempt is logged.
+
+**Deleting a task** is the one delete. Use the trash button in the task pane, then
+confirm. It's permanent: OpenProject deletes the task with its comments and files,
+and there's no undo. Only one task at a time, only in write-enabled projects, and
+OpenProject checks the person's own delete permission. A task with subtasks can't
+be deleted, because OpenProject would delete them too, so delete or move them
+first. Sections can't be deleted. There's no bulk delete, and MCP can't delete.
 
 **Bulk edits** go through it too, one task at a time. Select tasks in a list, the
 board or All tasks (each row's checkbox, Ctrl/Cmd-click, or Shift-click for a

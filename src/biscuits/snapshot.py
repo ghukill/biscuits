@@ -119,6 +119,7 @@ def make_row(e, status_meta, prio_meta):
         # What this person's OP permissions allow, so the UI can say so up front.
         "can_edit": "update" in links or "updateImmediately" in links,
         "can_comment": "addComment" in links,
+        "can_delete": "delete" in links,
     }
 
 
@@ -293,6 +294,23 @@ def upsert(uid, e):
             else:
                 wps.append(row)
     return row
+
+
+def drop(wp_id):
+    """Remove a deleted task from every account's cached snapshot. A task deleted in
+    OpenProject is gone for everyone, so no one should keep seeing it until their
+    next refresh."""
+    with _lock:
+        states = list(_states.items())
+    for uid, st in states:
+        with st.lock:
+            if st.data is None:
+                continue
+            before = len(st.data["work_packages"])
+            st.data["work_packages"] = [r for r in st.data["work_packages"] if r["id"] != wp_id]
+            if len(st.data["work_packages"]) == before:
+                continue
+        _save_disk(uid, st)
 
 
 def _safe_refresh(uid, op):

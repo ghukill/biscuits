@@ -113,6 +113,40 @@ def test_snapshot_and_detail_name_who_created_the_task(web):
     assert (detail["author_id"], detail["author"]) == (9, "Cass Creator")
 
 
+def test_deleting_a_task_takes_it_out_of_the_snapshot(write_config, op, web_as):
+    write_config("live", '"*"')
+    web = web_as()
+    assert {r["id"] for r in web.get("/api/snapshot").json["data"]["work_packages"]} == {1, 2}
+    assert web.post("/api/wp/1/delete").status_code == 403  # no CSRF header
+    r = web.post("/api/wp/1/delete", headers=H)
+    assert r.json["ok"] is True and r.json["sent"] is True
+    assert op.writes == [("DELETE", "/api/v3/work_packages/1", None)]
+    assert {r["id"] for r in web.get("/api/snapshot").json["data"]["work_packages"]} == {2}
+
+
+def test_a_refused_delete_is_a_json_error_and_keeps_the_task(write_config, op, web_as):
+    write_config("live", '"*"')
+    web = web_as()
+    web.get("/api/snapshot")
+    op.wp_links = {"children": [{"href": "/api/v3/work_packages/2"}]}
+    r = web.post("/api/wp/1/delete", headers=H)
+    assert r.status_code == 409 and "1 subtask" in r.json["error"]
+    assert op.writes == []
+    assert {r["id"] for r in web.get("/api/snapshot").json["data"]["work_packages"]} == {1, 2}
+
+
+def test_a_preview_delete_isnt_sent_and_keeps_the_task(web, op):
+    web.get("/api/snapshot")
+    r = web.post("/api/wp/1/delete", headers=H)
+    assert r.json["sent"] is False and r.json["reason"] == "preview mode"
+    assert len(web.get("/api/snapshot").json["data"]["work_packages"]) == 2
+
+
+def test_rows_say_whether_openproject_allows_deleting():
+    assert snapshot.make_row({"id": 1, "_links": {"delete": {"href": "/api/v3/work_packages/1"}}}, {}, {})["can_delete"]
+    assert not snapshot.make_row({"id": 1, "_links": {}}, {}, {})["can_delete"]
+
+
 def test_a_task_with_no_author_link_has_a_blank_creator():
     row = snapshot.make_row({"id": 1, "_links": {}}, {}, {})
     assert (row["author_id"], row["author"]) == (None, None)

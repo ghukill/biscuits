@@ -312,6 +312,30 @@ export async function comment(id, text) {
   return res;
 }
 
+// Delete one task in OpenProject, for good (#3464). Only after the person has
+// confirmed, and only from the task pane. Nothing changes on screen until
+// OpenProject has deleted it, since there's no undo. Resolves to true if deleted.
+export async function deleteTask(id) {
+  const r = row(id);
+  if (!r || r._local) return false;
+  try {
+    const res = await api(`/api/wp/${r.id}/delete`, { method: "POST", body: "{}" });
+    if (!res.sent) {
+      toast(`Not deleted: “${r.project}” isn't write-enabled, so nothing was sent to OpenProject.`, { kind: "warn", ms: 7000 });
+      return false;
+    }
+  } catch (e) {
+    toast(`Couldn't delete: ${e.message}`, { kind: "error", ms: 8000 });
+    return false;
+  }
+  S.rows.delete(r.id);
+  S.justDone.delete(r.id);
+  reindex();
+  emit({ type: "delete", ids: [r.id] });
+  toast(`Deleted #${r.id} “${r.subject.slice(0, 60)}”`);
+  return true;
+}
+
 export async function setArchived(pid, archived) {
   const name = projectName(pid);
   try {

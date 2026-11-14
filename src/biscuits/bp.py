@@ -310,6 +310,21 @@ def api_bulk_update():
                         "reason": o.get("reason"), "error": o.get("error"), "row": row})
     return jsonify(ok=True, results=results)
 
+@bp.post("/api/wp/<int:wp_id>/delete")
+def api_delete(wp_id):
+    """Delete one task in OpenProject, for good (#3464). Only from the task pane;
+    there's no bulk delete and no MCP tool for it."""
+    try:
+        out = writes.delete_task(current_op(), wp_id)
+    except writes.WriteError as e:
+        if e.status == 401:
+            raise client.OPError(str(e), status=401) from e
+        return jsonify(ok=False, error=str(e)), e.status if 400 <= e.status < 600 else 400
+    if out["sent"]:
+        snapshot.drop(wp_id)
+    return jsonify(ok=True, sent=out["sent"], reason=out["reason"], plan=out["plan"])
+
+
 @bp.post("/api/wp/<int:wp_id>/comment")
 def api_comment(wp_id):
     return _write(writes.comment, wp_id, (request.get_json(silent=True) or {}).get("text"))

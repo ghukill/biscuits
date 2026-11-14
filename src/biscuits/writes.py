@@ -14,8 +14,10 @@ as a preview.
 Writes go out with the acting user's own key, so OpenProject applies their
 permissions on top of this gate and records them as the author.
 
-There is no delete operation, on purpose. Every plan, sent or not, is appended
-to write-log.jsonl in the data dir for review, with who made it.
+There is one delete: delete_task(), for a single task with no subtasks, used
+only by the web app's task pane (#3464). Nothing else can be deleted, and MCP
+has no delete tool. Every plan, sent or not, is appended to write-log.jsonl in
+the data dir for review, with who made it.
 """
 
 import json
@@ -25,7 +27,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import client, config
+from . import client, config, snapshot
 
 _log_lock = threading.Lock()
 
@@ -95,12 +97,16 @@ def recent(n=100, user_id=None):
 
 def _send(op, method, path, body, raw=None):
     """Send JSON `body`, or with raw=(bytes, content_type) send those bytes instead."""
-    data, ctype = raw if raw else (json.dumps(body).encode(), "application/json")
-    req = urllib.request.Request(
-        f"{client.base_url()}/api/v3{path}", method=method, data=data,
-        headers={"Authorization": client.auth_header(op.key),
-                 "Content-Type": ctype, "Accept": "application/hal+json"},
-    )
+    if raw:
+        data, ctype = raw
+    elif body is None:  # a DELETE: nothing to send
+        data, ctype = None, None
+    else:
+        data, ctype = json.dumps(body).encode(), "application/json"
+    headers = {"Authorization": client.auth_header(op.key), "Accept": "application/hal+json"}
+    if ctype:
+        headers["Content-Type"] = ctype
+    req = urllib.request.Request(f"{client.base_url()}/api/v3{path}", method=method, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode() or "{}")
@@ -326,6 +332,28 @@ def create(conn, fields, notify=True):
         body["description"] = {"raw": str(fields["description"])[:MAX_TEXT]}
     return _execute(conn, "create", "POST", _quiet("/work_packages", notify), body, {project_id},
                     {"parent": parent_id})
+
+
+def delete_task(conn, wp_id):
+    """Delete one task in OpenProject, for good (#3464). It can't be undone.
+
+    Refused for a task with subtasks, because OpenProject would delete them too,
+    and for sections. OpenProject checks the person's own delete permission.
+    Gated and logged like every other write; the log keeps the task's name."""
+    cur = _wp(conn, wp_id)
+    links = cur.get("_links") or {}
+    kids = links.get("children") or []
+    if kids:
+        n = len(kids)
+        raise WriteError(f"This task has {n} subtask{'' if n == 1 else 's'}. Delete or move "
+                         f"{'it' if n == 1 else 'them'} first: deleting it would delete "
+                         f"{'it' if n == 1 else 'them'} too.", status=409)
+    subject = cur.get("subject") or ""
+    if (not (links.get("parent") or {}).get("href") and snapshot.section_name(subject) is not None
+            and (links.get("type") or {}).get("title") == snapshot.SECTION_TYPE_NAME):
+        raise WriteError("Sections can't be deleted from biscuits.", status=409)
+    return _execute(conn, "delete", "DELETE", f"/work_packages/{int(wp_id)}", None,
+                    {_id(links["project"]["href"])}, {"wp": int(wp_id), "subject_before": subject})
 
 
 def _file_name(name):
