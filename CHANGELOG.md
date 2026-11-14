@@ -3,6 +3,22 @@
 Each release of biscuits, newest first. A release is the only thing that changes
 the version, and every release goes to prod. See "Releases" in `README.md`.
 
+## 0.9.0 (2026-11-14)
+
+- **Delete a task** (#3464). Open a task and click the trash can at the top of
+  its panel, then confirm. This deletes it from OpenProject for good, with its
+  comments and files, and it can't be undone. Tasks are deleted one at a time. A
+  task with subtasks can't be deleted until its subtasks are deleted or moved,
+  and sections can't be deleted. You need permission to delete tasks in that
+  project.
+- **See who created each task** (#3519). A project's list has a new "Created by"
+  column, and each card on the board says who created it.
+
+Behind the scenes:
+
+- Deletes go through the same write check and write log as every other change.
+  The MCP tools still can't delete anything, so bots and agents can't either.
+
 ## 0.8.0 (2026-11-13)
 
 - **Change many tasks at once** (#3506). Tick the small square box on a task (or
